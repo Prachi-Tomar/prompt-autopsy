@@ -352,7 +352,9 @@ async def experiment(req: ExperimentRequest):
             if not sel: continue
             mean_risk = float(np.mean([rr.hallucination_risk for rr in sel]))
             mean_stab = float(np.mean([cos(rr.embedding, centroids[m]) for rr in sel]))
-            by_system_prompt[m][str(s)] = {"mean_risk": mean_risk, "mean_stability": mean_stab}
+            # Handle None values properly - use "None" string as key for None values
+            key = str(s) if s is not None else "None"
+            by_system_prompt[m][key] = {"mean_risk": mean_risk, "mean_stability": mean_stab}
 
     drift = DriftStats(
         centroid={m: list(centroids[m]) for m in centroids},
