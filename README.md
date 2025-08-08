@@ -1,4 +1,5 @@
 # Prompt Autopsy
+[![CI](https://github.com/Prachi-Tomar/prompt-autopsy/actions/workflows/ci.yml/badge.svg)](https://github.com/Prachi-Tomar/prompt-autopsy/actions/workflows/ci.yml)
 A forensic tool to compare LLM responses to the same prompt across models and explain why they differ. MVP includes:
 - FastAPI endpoint /compare for multi-model calls
 - Embedding-based similarity
@@ -17,6 +18,12 @@ It computes per-model drift and stability metrics to help you understand how dif
 3) cp .env.example .env and add your API keys
 4) uvicorn backend.app:app --reload
 5) streamlit run frontend/streamlit_app.py
+
+## Mock Mode (no API keys required)
+1) In `.env`, set `MOCK_MODE=1`
+2) Start backend and frontend as usual
+3) Run comparisons and experiments — all charts/tables will render with synthetic data
+4) Set `MOCK_MODE=0` to go back to live APIs
 
 ## Notes
 - Logprobs are placeholders and may depend on model support
