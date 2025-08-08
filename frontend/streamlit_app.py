@@ -106,6 +106,11 @@ with tab_main:
         elif len(data["results"]) == 1:
             st.info("Token diffs are only available when comparing multiple models. Select at least two models to see diffs.")
 
+        if data.get("logprob_diffs"):
+            st.subheader("Logprob differences between models")
+            for pair, stats in data["logprob_diffs"].items():
+                st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
+
         # Autopsy Report section
         def make_markdown_report(data, original_prompt, system_prompt):
             import datetime
@@ -257,6 +262,16 @@ with tab_exp:
                                     text=[f"{rr['model']} | T={rr['temperature']} | S={rr['system_prompt']}" for rr in exp["runs"]]))
         fig_rs.update_layout(xaxis_title="Risk", yaxis_title="Latency (ms)", height=350)
         st.plotly_chart(fig_rs, use_container_width=True)
+# Parameter influence (auto-detected)
+        pi = exp.get("drift", {}).get("parameter_influence")
+        if pi:
+            st.subheader("Parameter influence (auto-detected)")
+            for param, models_map in pi.items():
+                st.markdown(f"**{param.capitalize()}**")
+                for model, vals in models_map.items():
+                    st.markdown(f"- *{model}*")
+                    for v, metrics in vals.items():
+                        st.markdown(f"  - {param} = `{v}` → similarity to baseline: {metrics['similarity_to_baseline']:.3f}, risk change: {metrics['risk_change']:+.2f}")
 
         # CSV download
         csv = df.to_csv(index=False).encode("utf-8")

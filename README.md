@@ -4,6 +4,8 @@ A forensic tool to compare LLM responses to the same prompt across models and ex
 - FastAPI endpoint /compare for multi-model calls
 - Embedding-based similarity
 - Token diff and placeholders for logprobs
+- Logprob difference analysis between models
+- Automatic detection of temperature/system prompt influence on output similarity and hallucination risk
 - Streamlit UI for side-by-side viewing
 
 ## Experiments
