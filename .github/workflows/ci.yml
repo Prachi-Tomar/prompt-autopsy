@@ -49,33 +49,14 @@ jobs:
           COMPARERESP=$(curl -sS -X POST ${BACKEND_HOST}/compare \
             -H "Content-Type: application/json" \
             -d '{"prompt":"Say hi in one sentence","models":["gpt-4o","claude-3-opus"],"temperature":0.2}')
-          python - << 'EOF'
-import json, os
-data = json.loads(os.environ["COMPARERESP"])
-assert "results" in data and isinstance(data["results"], list) and data["results"], "Missing results"
-assert "embedding_similarity" in data, "Missing similarity"
-assert "summaries" in data, "Missing summaries"
-assert "token_diffs" in data, "Missing token_diffs"
-r = data["results"][0]
-for k in ("model","output_text","tokens","hallucination_risk"):
-    assert k in r, f"Missing result.{k}"
-print("OK: /compare schema looks good")
-EOF
+          echo "$COMPARERESP" | python scripts/validate_compare.py
 
       - name: Hit /experiment (mock)
         run: |
           EXPRESP=$(curl -sS -X POST ${BACKEND_HOST}/experiment \
             -H "Content-Type: application/json" \
             -d '{"prompt":"Explain quantum computing in simple terms.","models":["gpt-4o","claude-3-opus"],"temperatures":[0.0,0.7],"system_prompts":[null]}')
-          python - << 'EOF'
-import json, os
-data = json.loads(os.environ["EXPRESP"])
-assert "runs" in data and isinstance(data["runs"], list) and data["runs"], "Missing runs"
-assert "drift" in data and isinstance(data["drift"], dict), "Missing drift"
-for k in ("centroid","stability","by_temperature","by_system_prompt"):
-    assert k in data["drift"], f"Missing drift.{k}"
-print("OK: /experiment schema looks good")
-EOF
+          echo "$EXPRESP" | python scripts/validate_experiment.py
 
       - name: Upload logs on failure
         if: ${{ failure() }}
