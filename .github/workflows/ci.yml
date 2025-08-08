@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      MOCK_MODE: "1"
+      BACKEND_HOST: "http://127.0.0.1:8000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Launch backend (mock mode)
+        run: |
+          nohup uvicorn backend.app:app --host 127.0.0.1 --port 8000 &> backend.log &
+          for i in {1..30}; do
+            curl -sSf ${BACKEND_HOST}/docs >/dev/null && break
+            sleep 1
+          done
+          curl -sSf ${BACKEND_HOST}/docs >/dev/null
+
+      - name: Run unit tests
+        run: pytest -q
+
+      - name: Hit /compare (mock)
+        run: |
+          COMPARERESP=$(curl -sS -X POST ${BACKEND_HOST}/compare \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Say hi in one sentence","models":["gpt-4o","claude-3-opus"],"temperature":0.2}')
+          python - << 'EOF'
+import json, os
+data = json.loads(os.environ["COMPARERESP"])
+assert "results" in data and isinstance(data["results"], list) and data["results"], "Missing results"
+assert "embedding_similarity" in data, "Missing similarity"
+assert "summaries" in data, "Missing summaries"
+assert "token_diffs" in data, "Missing token_diffs"
+r = data["results"][0]
+for k in ("model","output_text","tokens","hallucination_risk"):
+    assert k in r, f"Missing result.{k}"
+print("OK: /compare schema looks good")
+EOF
+
+      - name: Hit /experiment (mock)
+        run: |
+          EXPRESP=$(curl -sS -X POST ${BACKEND_HOST}/experiment \
+            -H "Content-Type: application/json" \
+            -d '{"prompt":"Explain quantum computing in simple terms.","models":["gpt-4o","claude-3-opus"],"temperatures":[0.0,0.7],"system_prompts":[null]}')
+          python - << 'EOF'
+import json, os
+data = json.loads(os.environ["EXPRESP"])
+assert "runs" in data and isinstance(data["runs"], list) and data["runs"], "Missing runs"
+assert "drift" in data and isinstance(data["drift"], dict), "Missing drift"
+for k in ("centroid","stability","by_temperature","by_system_prompt"):
+    assert k in data["drift"], f"Missing drift.{k}"
+print("OK: /experiment schema looks good")
+EOF
+
+      - name: Upload logs on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs
+          path: backend.log
