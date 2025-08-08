@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend (Mock)",
+      "type": "shell",
+      "options": { "env": { "MOCK_MODE": "1" } },
+      "command": "uvicorn backend.app:app --reload",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend (Mock)",
+      "type": "shell",
+      "options": { "env": { "MOCK_MODE": "1" } },
+      "command": "streamlit run frontend/streamlit_app.py",
+      "dependsOn": ["Backend (Mock)"],
+      "problemMatcher": []
+    }
+  ]
+}
