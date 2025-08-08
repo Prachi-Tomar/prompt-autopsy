@@ -21,6 +21,7 @@ class CompareResponse(BaseModel):
     embedding_similarity: Dict[str, Dict[str, float]]
     summaries: Dict[str, Any]
     token_diffs: Dict[str, Dict[str, Any]] = {}
+    logprob_diffs: Dict[str, Dict[str, float]] = {}
 
 # Experiment models
 class ExperimentRequest(BaseModel):
@@ -52,6 +53,7 @@ class DriftStats(BaseModel):
     stability: Dict[str, List[float]]  # cosine to centroid per run index aligned with runs list
     by_temperature: Dict[str, Dict[float, Dict[str, float]]]  # model -> temp -> {"mean_risk":..., "mean_stability":...}
     by_system_prompt: Dict[str, Dict[str, Dict[str, float]]]  # model -> sys -> {...}
+    parameter_influence: Dict[str, Any] = {}
 
 class ExperimentResponse(BaseModel):
     runs: List[ExperimentRun]

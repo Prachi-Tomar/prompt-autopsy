@@ -11,6 +11,8 @@ import random
 from backend.analysis.hallucination import compute_hallucination_risk
 from backend.analysis.diff import html_token_diff, unified_token_diff
 from backend.utils.settings import MOCK_MODE
+from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
+from backend.analysis.parameter_influence import compute_parameter_influence
 
 app = FastAPI(title="Prompt Autopsy API")
 
@@ -77,12 +79,23 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
 +Think of qubits as coins...
 """
     token_diffs["gpt-4o||claude-3-opus"] = {"html": html_diff, "unified": unified_diff}
+# Logprob differences
+    logprob_diffs = {}
+    # Align tokens and compute differences
+    aligned = align_tokens_and_logprobs(
+        results[0].tokens, results[0].logprobs,
+        results[1].tokens, results[1].logprobs
+    )
+    summary = summarize_logprob_diff(aligned)
+    if summary:
+        logprob_diffs["gpt-4o||claude-3-opus"] = summary
     
     return CompareResponse(
         results=results,
         embedding_similarity=embedding_similarity,
         summaries=summaries,
-        token_diffs=token_diffs
+        token_diffs=token_diffs,
+        logprob_diffs=logprob_diffs
     )
 
 def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
@@ -217,13 +230,25 @@ def compare(req: CompareRequest):
             uni_view = unified_token_diff(results[i].tokens, results[j].tokens, results[i].model, results[j].model)
             token_diffs[key] = {"html": html_view, "unified": uni_view}
 
+# Compute logprob diffs for pairs where both have logprobs
+    logprob_diffs = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            r1, r2 = results[i], results[j]
+            if r1.logprobs is not None and r2.logprobs is not None:
+                key = f"{r1.model}||{r2.model}"
+                aligned = align_tokens_and_logprobs(r1.tokens, r1.logprobs, r2.tokens, r2.logprobs)
+                summary = summarize_logprob_diff(aligned)
+                if summary:
+                    logprob_diffs[key] = summary
     # Update summaries with highest risk
     top = max(results, key=lambda x: x.hallucination_risk or 0.0)
     summaries = {
         "note": "Autopsy summary placeholder. Hook in heuristics later.",
         "risk_highlight": f"Highest estimated hallucination risk: {top.model} ({top.hallucination_risk:.1f}/100)."
     }
-    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs)
+    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs)
+    
 
 # Helper functions for experiment endpoint
 def lp_stats(lp):
@@ -362,4 +387,14 @@ async def experiment(req: ExperimentRequest):
         by_temperature=by_temperature,
         by_system_prompt=by_system_prompt
     )
+    # Compute parameter influence
+    runs_dicts = [r.dict() if hasattr(r, "dict") else r for r in runs]
+    # baseline = lowest temperature and first system prompt present
+    temps = sorted({r["temperature"] for r in runs_dicts})
+    sysp = list({r["system_prompt"] for r in runs_dicts})
+    temp_inf = compute_parameter_influence(runs_dicts, "temperature", temps[0] if temps else 0.0)
+    sys_inf  = compute_parameter_influence(runs_dicts, "system_prompt", sysp[0] if sysp else None)
+
+    # attach
+    drift.parameter_influence = {"temperature": temp_inf, "system_prompt": sys_inf}
     return ExperimentResponse(runs=runs, drift=drift)
