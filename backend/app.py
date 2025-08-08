@@ -1,12 +1,168 @@
 from fastapi import FastAPI
-from backend.models.schemas import CompareRequest, CompareResponse, ModelResult
+from backend.models.schemas import CompareRequest, CompareResponse, ModelResult, ExperimentRequest, ExperimentRun, DriftStats, ExperimentResponse
 from backend.adapters.openai_adapter import OpenAIAdapter
 from backend.adapters.anthropic_adapter import AnthropicAdapter
 from backend.analysis.embeddings import embed_texts, pairwise_similarity
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import time
+import asyncio
+import random
 from backend.analysis.hallucination import compute_hallucination_risk
 from backend.analysis.diff import html_token_diff, unified_token_diff
+from backend.utils.settings import MOCK_MODE
 
 app = FastAPI(title="Prompt Autopsy API")
+
+# Mock response functions
+def mock_compare_response(req: CompareRequest) -> CompareResponse:
+    # Seed randomness for deterministic results
+    random.seed(42)
+    np.random.seed(42)
+    
+    # Define models to use
+    models = ["gpt-4o", "claude-3-opus"]
+    
+    # Sample output texts
+    output_texts = {
+        "gpt-4o": "Quantum computing uses qubits that can be both 0 and 1 at once, unlike classical bits which are either 0 or 1. This property, called superposition, allows quantum computers to process information in parallel, potentially solving certain problems much faster than classical computers. Additionally, quantum computers can leverage entanglement, where qubits become correlated in such a way that the state of one qubit can depend on the state of another, even over large distances.",
+        "claude-3-opus": "Think of qubits as coins spinning in the air - while spinning, they're neither fully heads nor tails but a probabilistic mixture of both. This 'superposition' lets quantum computers explore multiple solutions simultaneously. When these spinning coins become 'entangled', measuring one coin instantly affects the other, no matter the distance between them - Einstein called this 'spooky action at a distance'."
+    }
+    
+    results = []
+    for model in models:
+        # Generate logprobs (50 floats around -0.5 to -2.0)
+        logprobs = [random.uniform(-2.0, -0.5) for _ in range(50)]
+        
+        # Generate embedding (32-dim list of small floats)
+        embedding = [float(x) for x in np.random.uniform(-0.5, 0.5, 32)]
+        
+        # Hallucination risk and reasons
+        if model == "gpt-4o":
+            hallucination_risk = 22.5
+            reasons = ["Has references/citations (-8.0)", "Low-confidence tokens (+6.0)", "Hedging/speculative language (+4.0)"]
+        else:  # claude-3-opus
+            hallucination_risk = 28.7
+            reasons = ["Specifics without references (+8.0)", "No token-level confidence available (+8.0)", "Hedging/speculative language (+4.0)"]
+        
+        results.append(ModelResult(
+            model=model,
+            output_text=output_texts[model],
+            tokens=output_texts[model].split(),
+            logprobs=logprobs,
+            embedding=embedding,
+            hallucination_risk=hallucination_risk,
+            hallucination_reasons=reasons
+        ))
+    
+    # Create embedding similarity matrix (2x2 with 1.0 diagonal and ~0.90 off-diagonal)
+    embedding_similarity = {
+        "gpt-4o": {"gpt-4o": 1.0, "claude-3-opus": 0.91},
+        "claude-3-opus": {"gpt-4o": 0.91, "claude-3-opus": 1.0}
+    }
+    
+    # Summaries with risk_highlight
+    summaries = {
+        "note": "This is a mock response for demonstration purposes.",
+        "risk_highlight": "Highest estimated hallucination risk: claude-3-opus (28.7/100)."
+    }
+    
+    # Token diffs
+    token_diffs = {}
+    html_diff = "<div>Sample HTML diff between <span class='pa-del'>quantum computing</span> and <span class='pa-ins'>quantum mechanics</span></div>"
+    unified_diff = """--- gpt-4o
++++ claude-3-opus
+@@ -1 +1 @@
+-Quantum computing uses qubits...
++Think of qubits as coins...
+"""
+    token_diffs["gpt-4o||claude-3-opus"] = {"html": html_diff, "unified": unified_diff}
+    
+    return CompareResponse(
+        results=results,
+        embedding_similarity=embedding_similarity,
+        summaries=summaries,
+        token_diffs=token_diffs
+    )
+
+def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
+    # Seed randomness for deterministic results
+    random.seed(42)
+    np.random.seed(42)
+    
+    # Define models and temperatures
+    models = ["gpt-4o", "claude-3-opus"]
+    temperatures = [0.0, 0.7]
+    
+    # Generate runs (4 total)
+    runs = []
+    run_id = 0
+    for model in models:
+        for temp in temperatures:
+            run_id += 1
+            # Generate embedding (32-dim)
+            embedding = [float(x) for x in np.random.uniform(-0.5, 0.5, 32)]
+            
+            # Generate hallucination risk (15-55)
+            hallucination_risk = random.uniform(15, 55)
+            
+            # Generate reasons
+            reasons = [f"Mock reason {run_id}"]
+            
+            # Generate logprob stats with small variations
+            logprob_avg = random.uniform(-1.5, -0.5)
+            logprob_std = random.uniform(0.1, 0.5)
+            logprob_frac_low = random.uniform(0.1, 0.3)
+            
+            runs.append(ExperimentRun(
+                model=model,
+                temperature=temp,
+                system_prompt=None,
+                seed=None,
+                output_text=f"Sample output for {model} at temperature {temp}",
+                tokens=["Sample", "output", "for", model, "at", "temperature", str(temp)],
+                logprob_avg=logprob_avg,
+                logprob_std=logprob_std,
+                logprob_frac_low=logprob_frac_low,
+                embedding=embedding,
+                latency_ms=random.uniform(250, 950),
+                cost_usd=0.0,
+                hallucination_risk=hallucination_risk,
+                hallucination_reasons=reasons
+            ))
+    
+    # Generate drift stats
+    # Centroids per model (same dim)
+    centroids = {}
+    for model in models:
+        centroids[model] = [float(x) for x in np.random.uniform(-0.5, 0.5, 32)]
+    
+    # Stability arrays (values ~0.90-0.99)
+    stability = {}
+    for model in models:
+        stability[model] = [random.uniform(0.90, 0.99) for _ in range(2)]
+    
+    # by_temperature map with mean_risk and mean_stability
+    by_temperature = {}
+    for model in models:
+        by_temperature[model] = {}
+        for temp in temperatures:
+            # mean_risk roughly increases with temperature
+            mean_risk = 20 + (temp * 15)  # 20 at 0.0, 30.5 at 0.7
+            mean_stability = random.uniform(0.90, 0.99)
+            by_temperature[model][temp] = {"mean_risk": mean_risk, "mean_stability": mean_stability}
+    
+    # by_system_prompt (empty for mock)
+    by_system_prompt = {model: {} for model in models}
+    
+    drift = DriftStats(
+        centroid=centroids,
+        stability=stability,
+        by_temperature=by_temperature,
+        by_system_prompt=by_system_prompt
+    )
+    
+    return ExperimentResponse(runs=runs, drift=drift)
 
 def get_adapter(model_name: str):
     name = model_name.lower()
@@ -19,6 +175,9 @@ def get_adapter(model_name: str):
 
 @app.post("/compare", response_model=CompareResponse)
 def compare(req: CompareRequest):
+    if MOCK_MODE:
+        return mock_compare_response(req)
+    
     results = []
     for m in req.models:
         adapter = get_adapter(m)
@@ -80,6 +239,15 @@ def adapter_for(model):
 
 @app.post("/experiment", response_model=ExperimentResponse)
 async def experiment(req: ExperimentRequest):
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.info(f"Received experiment request: {req}")
+    logger.info(f"Request dict: {req.dict()}")
+    
+    if MOCK_MODE:
+        return mock_experiment_response(req)
+    
     seeds = req.seeds or [None]
     grid = []
     for m in req.models:
@@ -90,7 +258,7 @@ async def experiment(req: ExperimentRequest):
 
     # Run generation concurrently
     runs_raw = []
-    async def run_one(m, t, s, sd):
+    def run_one(m, t, s, sd):
         adapter = adapter_for(m)
         start = time.perf_counter()
         gen = adapter.generate(req.prompt, temperature=t, system_prompt=s)
@@ -112,7 +280,7 @@ async def experiment(req: ExperimentRequest):
         }
 
     # Note: adapters are synchronous. Run in thread pool via asyncio.to_thread
-    runs_raw = await asyncio.gather(*[asyncio.to_thread(run_one, m,t,s,sd) for (m,t,s,sd) in grid])
+    runs_raw = [run_one(m, t, s, sd) for (m, t, s, sd) in grid]
 
     # Embeddings in batch for speed
     texts = [r["output_text"] for r in runs_raw]

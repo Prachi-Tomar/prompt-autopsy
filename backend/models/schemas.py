@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 class CompareRequest(BaseModel):
     prompt: str
@@ -27,7 +27,7 @@ class ExperimentRequest(BaseModel):
     prompt: str
     models: List[str]
     temperatures: List[float] = [0.2, 0.7]
-    system_prompts: List[str] = [None]
+    system_prompts: List[Union[str, None]] = [None]
     seeds: List[int] = []
 
 class ExperimentRun(BaseModel):
