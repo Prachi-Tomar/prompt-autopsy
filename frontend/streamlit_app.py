@@ -31,16 +31,14 @@ with st.sidebar:
     models = st.multiselect(
         "Models",
         [
-            # OpenAI
             "gpt-5", "gpt-5-mini",
             "gpt-4o", "gpt-4o-mini",
-            # Anthropic (update to match your account exactly)
             "claude-3.5-sonnet-2024-10-22",
             "claude-3.5-sonnet-2024-06-20",
             "claude-3.5-haiku",
             "claude-3-haiku"
         ],
-        default=["gpt-5", "claude-3.5-sonnet-2024-10-22"]
+        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"]
     )
     temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
     system_prompt = st.text_area("System prompt (optional)", "")
@@ -76,12 +74,26 @@ with tab_main:
                 st.code(r["output_text"])
                 # Highlight provider errors
                 if "ERROR:" in r["output_text"].upper():
-                    st.warning("Provider error detected in model response")
+                    st.warning(f"Provider error for {r['model']}. See output above for details.")
                 st.markdown(f"**Hallucination risk:** {r['hallucination_risk']:.1f} / 100")
                 if r.get("hallucination_reasons"):
                     st.markdown("Reasons:")
                     for reason in r["hallucination_reasons"]:
                         st.markdown(f"- {reason}")
+                
+                # Display token usage and cost meta line
+                meta = []
+                if r.get("prompt_tokens") is not None:
+                    meta.append(f"prompt={r['prompt_tokens']}")
+                if r.get("completion_tokens") is not None:
+                    meta.append(f"completion={r['completion_tokens']}")
+                if r.get("total_tokens") is not None:
+                    meta.append(f"total={r['total_tokens']}")
+                if r.get("cost_usd") is not None:
+                    meta.append(f"~${r['cost_usd']:.6f}")
+                if meta:
+                    st.caption(" • ".join(meta))
+                
                 if r.get("logprobs") is not None:
                     fig = go.Figure()
                     fig.add_bar(x=list(range(len(r["logprobs"]))), y=r["logprobs"])
@@ -196,6 +208,10 @@ with tab_main:
             file_name="prompt_autopsy_report.md",
             mime="text/markdown"
         )
+        
+        # Display total estimated cost
+        total_cost = sum([r.get("cost_usd") or 0.0 for r in data.get("results", [])])
+        st.markdown(f"**Estimated total cost:** ~${total_cost:.6f}")
 
 with tab_exp:
     st.subheader("Experiments")
@@ -203,16 +219,14 @@ with tab_exp:
     e_models = st.multiselect(
         "Models",
         [
-            # OpenAI
             "gpt-5", "gpt-5-mini",
             "gpt-4o", "gpt-4o-mini",
-            # Anthropic (update to match your account exactly)
             "claude-3.5-sonnet-2024-10-22",
             "claude-3.5-sonnet-2024-06-20",
             "claude-3.5-haiku",
             "claude-3-haiku"
         ],
-        default=["gpt-5", "claude-3.5-sonnet-2024-10-22"],
+        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
         key="exp_models"
     )
     temps_str = st.text_input("Temperatures (comma separated)", "0.2,0.7", key="exp_temps")

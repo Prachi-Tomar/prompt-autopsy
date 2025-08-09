@@ -15,6 +15,10 @@ class ModelResult(BaseModel):
     embedding: Optional[List[float]] = None
     hallucination_risk: Optional[float] = None
     hallucination_reasons: Optional[List[str]] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
 
 class CompareResponse(BaseModel):
     results: List[ModelResult]

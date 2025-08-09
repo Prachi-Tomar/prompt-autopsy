@@ -2,6 +2,7 @@ import anthropic
 from typing import Optional, Dict, Any
 from .base import LLMAdapter
 from ..utils.settings import ANTHROPIC_API_KEY
+from backend.analysis.pricing import estimate_cost
 import logging
 
 # Configure logging
@@ -32,6 +33,14 @@ class AnthropicAdapter(LLMAdapter):
             # Extract content
             output_text = response.content[0].text
             
+            # Extract usage information
+            prompt_tokens = getattr(response.usage, "input_tokens", None) if hasattr(response, 'usage') else None
+            completion_tokens = getattr(response.usage, "output_tokens", None) if hasattr(response, 'usage') else None
+            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+            
+            # Compute cost
+            cost = estimate_cost(self.model_name, "anthropic", prompt_tokens or 0, completion_tokens or 0)
+            
             # Log token count
             if hasattr(response, 'usage') and response.usage:
                 logger.info(f"Anthropic {self.model_name} - Tokens: {response.usage.output_tokens + response.usage.input_tokens}")
@@ -45,7 +54,11 @@ class AnthropicAdapter(LLMAdapter):
             return {
                 "output_text": output_text,
                 "tokens": tokens,
-                "logprobs": logprobs
+                "logprobs": logprobs,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": round(cost, 6)
             }
             
         except Exception as e:

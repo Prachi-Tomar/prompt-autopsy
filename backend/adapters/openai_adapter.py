@@ -1,6 +1,7 @@
 from typing import Optional, Dict, Any, List
 from .base import LLMAdapter
 from backend.utils import settings
+from backend.analysis.pricing import estimate_cost
 
 # OpenAI SDK v1.x
 try:
@@ -50,6 +51,11 @@ class OpenAIAdapter(LLMAdapter):
             err = "[OpenAI ERROR] No SDK or OPENAI_API_KEY configured."
             return {"output_text": err, "tokens": err.split(), "logprobs": None}
 
+        # Models that don't support temperature parameter
+        TEMP_LOCKED_MODELS = {"gpt-5", "gpt-5-mini"}  # add more if needed
+
+        use_temperature = None if self.model_name in TEMP_LOCKED_MODELS else temperature
+
         # Build messages
         messages = []
         if system_prompt:
@@ -58,29 +64,69 @@ class OpenAIAdapter(LLMAdapter):
 
         # Try Chat Completions first (works with gpt-4o, gpt-4o-mini, and typically gpt-5 if enabled)
         try:
-            resp = _openai_client.chat.completions.create(
-                model=self.model_name,                 # e.g., "gpt-5", "gpt-5-mini", "gpt-4o"
-                messages=messages,
-                temperature=temperature,
+            params = {
+                "model": self.model_name,                 # e.g., "gpt-5", "gpt-5-mini", "gpt-4o"
+                "messages": messages,
                 # Logprobs are supported on many chat models; if not, API will ignore or error
-                logprobs=True,
-                top_logprobs=5
-            )
+                "logprobs": True,
+                "top_logprobs": 5
+            }
+            if use_temperature is not None:
+                params["temperature"] = use_temperature
+
+            resp = _openai_client.chat.completions.create(**params)
             parsed = _extract_logprobs_from_chat(resp)
+            
+            # Extract usage information
+            usage = getattr(resp, "usage", None)
+            pt = getattr(usage, "prompt_tokens", None) or (usage.get("prompt_tokens") if isinstance(usage, dict) else None)
+            ct = getattr(usage, "completion_tokens", None) or (usage.get("completion_tokens") if isinstance(usage, dict) else None)
+            tt = getattr(usage, "total_tokens", None) or (usage.get("total_tokens") if isinstance(usage, dict) else None)
+            
+            # Compute cost
+            cost = estimate_cost(self.model_name, "openai", pt or 0, ct or 0)
+            
+            # Include usage and cost in return dict
+            parsed.update({
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "total_tokens": tt,
+                "cost_usd": round(cost, 6)
+            })
             return parsed
 
         except Exception as e_chat:
             # If the model is missing or logprobs unsupported, retry without logprobs
             try:
-                resp = _openai_client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=temperature
-                )
+                params = {
+                    "model": self.model_name,
+                    "messages": messages
+                }
+                if use_temperature is not None:
+                    params["temperature"] = use_temperature
+
+                resp = _openai_client.chat.completions.create(**params)
                 parsed = _extract_logprobs_from_chat(resp)
                 # Ensure we mark logprobs as None in this path
                 parsed["logprobs"] = None
+                
+                # Extract usage information
+                usage = getattr(resp, "usage", None)
+                pt = getattr(usage, "prompt_tokens", None) or (usage.get("prompt_tokens") if isinstance(usage, dict) else None)
+                ct = getattr(usage, "completion_tokens", None) or (usage.get("completion_tokens") if isinstance(usage, dict) else None)
+                tt = getattr(usage, "total_tokens", None) or (usage.get("total_tokens") if isinstance(usage, dict) else None)
+                
+                # Compute cost
+                cost = estimate_cost(self.model_name, "openai", pt or 0, ct or 0)
+                
+                # Include usage and cost in return dict
+                parsed.update({
+                    "prompt_tokens": pt,
+                    "completion_tokens": ct,
+                    "total_tokens": tt,
+                    "cost_usd": round(cost, 6)
+                })
                 return parsed
             except Exception as e_final:
                 err = f"[OpenAI ERROR: {type(e_final).__name__}] {e_final}"
-                return {"output_text": err, "tokens": err.split(), "logprobs": None}
+                return {"output_text": err, "tokens": err.split(), "logprobs": None, "prompt_tokens": None, "completion_tokens": None, "total_tokens": None, "cost_usd": None}

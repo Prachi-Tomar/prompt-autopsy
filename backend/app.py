@@ -180,25 +180,20 @@ def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
 # Model alias mapping for robustness to model ID changes
 MODEL_ALIASES = {
     # OpenAI old → current
-    "gpt4": "gpt-4o",
     "gpt-4": "gpt-4o",
+    "gpt4": "gpt-4o",
     "gpt-4-turbo": "gpt-4o",
     "gpt-3.5-turbo": "gpt-4o-mini",
 
-    # GPT-5 variants mapping
+    # GPT-5
     "gpt5": "gpt-5",
     "gpt-5-turbo": "gpt-5",
-    "gpt-5-preview": "gpt-5",
 
-    # Anthropic generic → exact
-    "claude-3-opus": "claude-3-opus-20240229",
-    "claude-opus": "claude-3-opus-20240229",
-    "claude-3-sonnet": "claude-3.5-sonnet-2024-10-22",
-    "claude-sonnet": "claude-3.5-sonnet-2024-10-22",
-    "claude-sonnet-3.7": "claude-3-sonnet-20240229",
-    "claude-3.5-sonnet": "claude-3.5-sonnet-2024-10-22",
-    "claude-3.5-haiku": "claude-3.5-haiku",
-    "claude-3-haiku": "claude-3-haiku"
+    # Anthropic friendly → exact IDs (update if your dashboard shows different date codes)
+    "claude-3.5-sonnet-2024-10-22": "claude-3-5-sonnet-20241022",
+    "claude-3.5-sonnet-2024-06-20": "claude-3-5-sonnet-20240620",
+    "claude-3.5-haiku": "claude-3-5-haiku-20240307",
+    "claude-3-haiku": "claude-3-haiku-20240307"
 }
 
 def get_adapter(model_name: str):
