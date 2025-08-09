@@ -267,12 +267,8 @@ def compare(req: CompareRequest):
                 summary = summarize_logprob_diff(aligned)
                 if summary:
                     logprob_diffs[key] = summary
-    # Update summaries with highest risk
-    top = max(results, key=lambda x: x.hallucination_risk or 0.0)
-    summaries = {
-        "note": "Autopsy summary placeholder. Hook in heuristics later.",
-        "risk_highlight": f"Highest estimated hallucination risk: {top.model} ({top.hallucination_risk:.1f}/100)."
-    }
+    # Update summaries with computed narrative
+    summaries = build_autopsy_summary(results, sim, logprob_diffs)
     return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs)
     
 
@@ -281,6 +277,93 @@ def lp_stats(lp):
     if not lp: return None, None, None
     arr = np.array(lp, dtype=float)
     return float(np.mean(arr)), float(np.std(arr)), float((arr < -2.5).mean())
+
+def build_autopsy_summary(results, sim_matrix, logprob_diffs):
+    """
+    results: list[ModelResult]
+    sim_matrix: dict[str, dict[str, float]]
+    logprob_diffs: dict["A||B" -> {mean_abs_diff, max_abs_diff, n_compared}]
+    Returns dict with keys:
+      summary (short paragraph),
+      highlights (list[str]),
+      top_model (str),
+      highest_risk (str, float),
+      closest_pair (tuple[str,str,float]),
+      farthest_pair (tuple[str,str,float])
+    """
+    if not results:
+        return {"summary": "No results.", "highlights": []}
+
+    # Highest risk
+    top = max(results, key=lambda r: (r.hallucination_risk or 0))
+    highest_risk = (top.model, float(top.hallucination_risk or 0.0))
+
+    # Similarity extremes
+    labels = [r.model for r in results]
+    closest = (None, None, -1.0)
+    farthest = (None, None, 2.0)
+    for a in labels:
+        for b in labels:
+            if a >= b:  # avoid dup/self
+                continue
+            s = sim_matrix.get(a, {}).get(b, 0.0)
+            if s > closest[2]:
+                closest = (a, b, float(s))
+            if s < farthest[2]:
+                farthest = (a, b, float(s))
+
+    # Logprob divergence (if available)
+    lp_note = None
+    if logprob_diffs:
+        pair, stats = max(logprob_diffs.items(), key=lambda kv: kv[1].get("mean_abs_diff", 0.0))
+        lp_note = f"Largest confidence gap: {pair} (mean |Δlogprob| {stats['mean_abs_diff']:.2f})."
+
+    # Compose
+    highlights = []
+    highlights.append(f"Highest estimated hallucination risk: {highest_risk[0]} ({highest_risk[1]:.1f}/100).")
+    if closest[0]:
+        highlights.append(f"Closest pair by meaning: {closest[0]} vs {closest[1]} (cos {closest[2]:.3f}).")
+    if farthest[0]:
+        highlights.append(f"Most divergent pair: {farthest[0]} vs {farthest[1]} (cos {farthest[2]:.3f}).")
+    if lp_note:
+        highlights.append(lp_note)
+
+    # Short paragraph
+    parts = []
+    parts.append(f"{len(results)} models compared.")
+    parts.append(highlights[0])
+    if closest[0]:
+        parts.append(f"{closest[0]} and {closest[1]} were most semantically aligned.")
+    if farthest[0]:
+        parts.append(f"{farthest[0]} and {farthest[1]} differed the most.")
+    if lp_note:
+        parts.append("Confidence varied across models; see logprob differences for details.")
+    summary = " ".join(parts)
+
+    # Choose a 'top_model' heuristic: lowest risk, highest similarity to group centroid
+    import numpy as np
+    vecs = [(r.model, np.array(r.embedding)) for r in results if r.embedding is not None]
+    top_model = highest_risk[0]
+    if vecs:
+        centroid = np.mean([v for _, v in vecs], axis=0, keepdims=True)
+        from sklearn.metrics.pairwise import cosine_similarity
+        sims = [(m, float(cosine_similarity(v.reshape(1,-1), centroid)[0,0])) for m, v in vecs]
+        # prefer low risk then high centroid similarity
+        def score(r):
+            risk = r.hallucination_risk or 0.0
+            sim = next((s for m,s in sims if m == r.model), 0.0)
+            return (-risk, sim)
+        best = max(results, key=score)
+        top_model = best.model
+
+    return {
+        "summary": summary,
+        "highlights": highlights,
+        "top_model": top_model,
+        "highest_risk": {"model": highest_risk[0], "score": highest_risk[1]},
+        "closest_pair": {"a": closest[0], "b": closest[1], "cosine": closest[2]},
+        "farthest_pair": {"a": farthest[0], "b": farthest[1], "cosine": farthest[2]}
+    }
 
 def adapter_for(model):
     raw = model

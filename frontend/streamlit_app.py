@@ -108,7 +108,34 @@ with tab_main:
         st.plotly_chart(heat, use_container_width=True)
 
         st.subheader("Autopsy summary")
-        st.write(data["summaries"])
+        summ = data.get("summaries", {})
+        rec = summ.get("top_model")
+        if rec:
+            st.markdown(
+                f"<div style='display:inline-block;padding:6px 10px;border-radius:8px;background:#eef6ff;border:1px solid #cfe3ff;font-weight:600;'>"
+                f"✅ Recommended model: {rec}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        if isinstance(summ, dict) and summ:
+            if "summary" in summ:
+                st.write(summ["summary"])
+            if "highlights" in summ and isinstance(summ["highlights"], list):
+                for h in summ["highlights"]:
+                    st.markdown(f"- {h}")
+            # Optional badges
+            meta_cols = st.columns(3)
+            hm = summ.get("highest_risk", {})
+            if hm:
+                meta_cols[0].metric("Highest risk", f"{hm.get('model','?')}", f"{hm.get('score',0):.1f}")
+            cp = summ.get("closest_pair", {})
+            if cp:
+                meta_cols[1].metric("Closest pair (cos)", f"{cp.get('a','?')} vs {cp.get('b','?')}", f"{cp.get('cosine',0):.3f}")
+            fp = summ.get("farthest_pair", {})
+            if fp:
+                meta_cols[2].metric("Most divergent (cos)", f"{fp.get('a','?')} vs {fp.get('b','?')}", f"{fp.get('cosine',0):.3f}")
+        else:
+            st.info("No summary available yet.")
 
         st.subheader("Hallucination risk by model")
         risk_fig = go.Figure(go.Bar(x=[res['hallucination_risk'] for res in data['results']],
@@ -152,6 +179,20 @@ with tab_main:
             report += f"**Prompt:**\n\n```\n{original_prompt}\n```\n\n"
             if system_prompt:
                 report += f"**System Prompt:**\n\n```\n{system_prompt}\n```\n\n"
+            
+            # Summary information
+            summ = data.get("summaries", {}) if isinstance(data, dict) else {}
+            hl = summ.get("highlights", []) if isinstance(summ, dict) else []
+            
+            report += "## Autopsy Summary\n"
+            report += f"{summ.get('summary', 'No summary available.')}\n\n"
+            
+            report += "### Highlights\n"
+            report += f"{chr(10).join(['- ' + str(x) for x in hl]) if hl else '_None_'}\n\n"
+            
+            # Optional metrics
+            report += f"- **Recommended model:** {summ.get('top_model', 'N/A')}\n"
+            report += f"- **Highest risk:** { (summ.get('highest_risk') or {}).get('model', 'N/A') } ({ (summ.get('highest_risk') or {}).get('score', 'N/A') })\n\n"
             
             # Models compared
             models = [r['model'] for r in data['results']]
