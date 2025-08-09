@@ -26,6 +26,8 @@ class CompareResponse(BaseModel):
     summaries: Dict[str, Any]
     token_diffs: Dict[str, Dict[str, Any]] = {}
     logprob_diffs: Dict[str, Dict[str, float]] = {}
+    semantic_diffs: Dict[str, Dict[str, float]] = {}
+    aligned_logprobs: Dict[str, List[Tuple[Optional[str], Optional[float], Optional[str], Optional[float], Optional[float]]]] = {}
 
 # Experiment models
 class ExperimentRequest(BaseModel):

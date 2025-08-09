@@ -13,6 +13,7 @@ from backend.analysis.diff import html_token_diff, unified_token_diff
 from backend.utils.settings import MOCK_MODE
 from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
 from backend.analysis.parameter_influence import compute_parameter_influence
+from backend.analysis.semantic_diff import classify_semantic_divergence
 
 app = FastAPI(title="Prompt Autopsy API")
 
@@ -79,7 +80,7 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
 +Think of qubits as coins...
 """
     token_diffs["gpt-4o||claude-3-opus"] = {"html": html_diff, "unified": unified_diff}
-# Logprob differences
+    # Logprob differences
     logprob_diffs = {}
     # Align tokens and compute differences
     aligned = align_tokens_and_logprobs(
@@ -89,13 +90,22 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
     summary = summarize_logprob_diff(aligned)
     if summary:
         logprob_diffs["gpt-4o||claude-3-opus"] = summary
-    
+
+    # Compute semantic divergence for each pair
+    semantic_diffs = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            a, b = results[i], results[j]
+            scores = classify_semantic_divergence(a.output_text or "", b.output_text or "")
+            semantic_diffs[f"{a.model}||{b.model}"] = scores
+
     return CompareResponse(
         results=results,
         embedding_similarity=embedding_similarity,
         summaries=summaries,
         token_diffs=token_diffs,
-        logprob_diffs=logprob_diffs
+        logprob_diffs=logprob_diffs,
+        semantic_diffs=semantic_diffs
     )
 
 def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
@@ -255,8 +265,8 @@ def compare(req: CompareRequest):
             html_view = html_token_diff(results[i].tokens, results[j].tokens)
             uni_view = unified_token_diff(results[i].tokens, results[j].tokens, results[i].model, results[j].model)
             token_diffs[key] = {"html": html_view, "unified": uni_view}
-
-# Compute logprob diffs for pairs where both have logprobs
+ 
+    # Compute logprob diffs for pairs where both have logprobs
     logprob_diffs = {}
     for i in range(len(results)):
         for j in range(i + 1, len(results)):
@@ -267,9 +277,29 @@ def compare(req: CompareRequest):
                 summary = summarize_logprob_diff(aligned)
                 if summary:
                     logprob_diffs[key] = summary
+                
+    # Compute semantic divergence for each pair
+    semantic_diffs = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            r1, r2 = results[i], results[j]
+            key = f"{r1.model}||{r2.model}"
+            semantic_diffs[key] = classify_semantic_divergence(r1.output_text, r2.output_text)
+                
+    # Compute aligned token data for pairs where both have logprobs
+    aligned_data = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            a = results[i]
+            b = results[j]
+            if a.logprobs is not None and b.logprobs is not None:
+                aligned = align_tokens_and_logprobs(a.tokens, a.logprobs, b.tokens, b.logprobs)
+                key = f"{a.model}||{b.model}"
+                aligned_data[key] = aligned
+            
     # Update summaries with computed narrative
     summaries = build_autopsy_summary(results, sim, logprob_diffs)
-    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs)
+    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs, semantic_diffs=semantic_diffs, aligned_logprobs=aligned_data)
     
 
 # Helper functions for experiment endpoint
@@ -328,6 +358,31 @@ def build_autopsy_summary(results, sim_matrix, logprob_diffs):
     if lp_note:
         highlights.append(lp_note)
 
+    # Influence detection (simple)
+    if len(results) == 2:
+        r1, r2 = results
+        diff_temp = (r1.temperature != r2.temperature) if hasattr(r1, "temperature") and hasattr(r2, "temperature") else False
+        diff_sys = (r1.system_prompt != r2.system_prompt) if hasattr(r1, "system_prompt") and hasattr(r2, "system_prompt") else False
+        if diff_temp or diff_sys:
+            from sklearn.metrics.pairwise import cosine_similarity
+            sim = cosine_similarity([r1.embedding], [r2.embedding])[0,0] if r1.embedding and r2.embedding else None
+            risk_delta = (r2.hallucination_risk or 0) - (r1.hallucination_risk or 0)
+            if diff_temp:
+                summaries_note = f"Changing temperature from {r1.temperature} to {r2.temperature} changed similarity to {sim:.3f} and risk by {risk_delta:+.1f}."
+            elif diff_sys:
+                summaries_note = f"Changing system prompt altered similarity to {sim:.3f} and risk by {risk_delta:+.1f}."
+            else:
+                summaries_note = None
+            if summaries_note:
+                highlights.append(summaries_note)
+                influence_sentence = summaries_note
+            else:
+                influence_sentence = None
+        else:
+            influence_sentence = None
+    else:
+        influence_sentence = None
+
     # Short paragraph
     parts = []
     parts.append(f"{len(results)} models compared.")
@@ -362,7 +417,8 @@ def build_autopsy_summary(results, sim_matrix, logprob_diffs):
         "top_model": top_model,
         "highest_risk": {"model": highest_risk[0], "score": highest_risk[1]},
         "closest_pair": {"a": closest[0], "b": closest[1], "cosine": closest[2]},
-        "farthest_pair": {"a": farthest[0], "b": farthest[1], "cosine": farthest[2]}
+        "farthest_pair": {"a": farthest[0], "b": farthest[1], "cosine": farthest[2]},
+        "influence_sentence": influence_sentence
     }
 
 def adapter_for(model):

@@ -123,6 +123,9 @@ with tab_main:
             if "highlights" in summ and isinstance(summ["highlights"], list):
                 for h in summ["highlights"]:
                     st.markdown(f"- {h}")
+            # Display influence sentence if available
+            if summ.get("influence_sentence"):
+                st.info(summ["influence_sentence"])
             # Optional badges
             meta_cols = st.columns(3)
             hm = summ.get("highest_risk", {})
@@ -166,6 +169,26 @@ with tab_main:
             for pair, stats in data["logprob_diffs"].items():
                 st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
 
+        # Semantic divergence (heuristics)
+        sd = data.get("semantic_diffs", {})
+        if sd:
+            st.subheader("Semantic divergence (heuristics)")
+            for pair, scores in sd.items():
+                # Show top 2 labels by score
+                top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:2]
+                tags = " • ".join([f"{k}: {v:.2f}" for k,v in top])
+                st.markdown(f"**{pair}** — {tags}")
+
+# Display aligned token data as tables
+        apairs = data.get("aligned_logprobs", {})
+        if apairs:
+            for pair, rows in apairs.items():
+                st.markdown(f"**Token logprob diff for {pair}**")
+                st.dataframe(
+                    [{"A_token": a, "A_lp": la, "B_token": b, "B_lp": lb, "Δlp": diff}
+                     for (a, la, b, lb, diff) in rows[:50]],  # limit to first 50 rows
+                    use_container_width=True
+                )
         # Autopsy Report section
         def make_markdown_report(data, original_prompt, system_prompt):
             import datetime
@@ -231,7 +254,16 @@ with tab_main:
                     for reason in r['hallucination_reasons']:
                         report += f"  - {reason}\n"
                 report += "\n"
-            
+             
+            # Semantic divergence (heuristics)
+            sd = data.get("semantic_diffs", {})
+            if sd:
+                report += "\n## Semantic divergence (heuristics)\n"
+                for pair, scores in sd.items():
+                    ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+                    line = ", ".join([f"{k}: {v:.2f}" for k,v in ordered])
+                    report += f"- **{pair}** — {line}\n"
+             
             # Pairwise diffs
             if data.get('token_diffs'):
                 for pair_key, diff_data in data['token_diffs'].items():
