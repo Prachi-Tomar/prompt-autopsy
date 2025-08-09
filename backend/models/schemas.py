@@ -15,6 +15,10 @@ class ModelResult(BaseModel):
     embedding: Optional[List[float]] = None
     hallucination_risk: Optional[float] = None
     hallucination_reasons: Optional[List[str]] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
 
 class CompareResponse(BaseModel):
     results: List[ModelResult]
@@ -22,6 +26,8 @@ class CompareResponse(BaseModel):
     summaries: Dict[str, Any]
     token_diffs: Dict[str, Dict[str, Any]] = {}
     logprob_diffs: Dict[str, Dict[str, float]] = {}
+    semantic_diffs: Dict[str, Dict[str, float]] = {}
+    aligned_logprobs: Dict[str, List[Tuple[Optional[str], Optional[float], Optional[str], Optional[float], Optional[float]]]] = {}
 
 # Experiment models
 class ExperimentRequest(BaseModel):

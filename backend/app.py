@@ -13,6 +13,7 @@ from backend.analysis.diff import html_token_diff, unified_token_diff
 from backend.utils.settings import MOCK_MODE
 from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
 from backend.analysis.parameter_influence import compute_parameter_influence
+from backend.analysis.semantic_diff import classify_semantic_divergence
 
 app = FastAPI(title="Prompt Autopsy API")
 
@@ -79,7 +80,7 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
 +Think of qubits as coins...
 """
     token_diffs["gpt-4o||claude-3-opus"] = {"html": html_diff, "unified": unified_diff}
-# Logprob differences
+    # Logprob differences
     logprob_diffs = {}
     # Align tokens and compute differences
     aligned = align_tokens_and_logprobs(
@@ -89,13 +90,22 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
     summary = summarize_logprob_diff(aligned)
     if summary:
         logprob_diffs["gpt-4o||claude-3-opus"] = summary
-    
+
+    # Compute semantic divergence for each pair
+    semantic_diffs = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            a, b = results[i], results[j]
+            scores = classify_semantic_divergence(a.output_text or "", b.output_text or "")
+            semantic_diffs[f"{a.model}||{b.model}"] = scores
+
     return CompareResponse(
         results=results,
         embedding_similarity=embedding_similarity,
         summaries=summaries,
         token_diffs=token_diffs,
-        logprob_diffs=logprob_diffs
+        logprob_diffs=logprob_diffs,
+        semantic_diffs=semantic_diffs
     )
 
 def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
@@ -177,14 +187,40 @@ def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
     
     return ExperimentResponse(runs=runs, drift=drift)
 
+# Model alias mapping for robustness to model ID changes
+MODEL_ALIASES = {
+    # OpenAI old → current
+    "gpt-4": "gpt-4o",
+    "gpt4": "gpt-4o",
+    "gpt-4-turbo": "gpt-4o",
+    "gpt-3.5-turbo": "gpt-4o-mini",
+
+    # GPT-5
+    "gpt5": "gpt-5",
+    "gpt-5-turbo": "gpt-5",
+
+    # Anthropic friendly → exact IDs (update if your dashboard shows different date codes)
+    "claude-3.5-sonnet-2024-10-22": "claude-3-5-sonnet-20241022",
+    "claude-3.5-sonnet-2024-06-20": "claude-3-5-sonnet-20240620",
+    "claude-3.5-haiku": "claude-3-5-haiku-20240307",
+    "claude-3-haiku": "claude-3-haiku-20240307"
+}
+
 def get_adapter(model_name: str):
-    name = model_name.lower()
-    if name.startswith("gpt"):
-        return OpenAIAdapter(model_name)
-    if name.startswith("claude"):
-        return AnthropicAdapter(model_name)
-    # default stub
-    return OpenAIAdapter(model_name)
+    raw = model_name
+    name = model_name.strip()
+    key = name.lower()
+    for k, v in MODEL_ALIASES.items():
+        if key == k.lower():
+            name = v
+            break
+
+    lname = name.lower()
+    if lname.startswith("gpt"):
+        return OpenAIAdapter(name)
+    if lname.startswith("claude"):
+        return AnthropicAdapter(name)
+    return OpenAIAdapter(name)  # fallback
 
 @app.post("/compare", response_model=CompareResponse)
 def compare(req: CompareRequest):
@@ -229,8 +265,8 @@ def compare(req: CompareRequest):
             html_view = html_token_diff(results[i].tokens, results[j].tokens)
             uni_view = unified_token_diff(results[i].tokens, results[j].tokens, results[i].model, results[j].model)
             token_diffs[key] = {"html": html_view, "unified": uni_view}
-
-# Compute logprob diffs for pairs where both have logprobs
+ 
+    # Compute logprob diffs for pairs where both have logprobs
     logprob_diffs = {}
     for i in range(len(results)):
         for j in range(i + 1, len(results)):
@@ -241,13 +277,29 @@ def compare(req: CompareRequest):
                 summary = summarize_logprob_diff(aligned)
                 if summary:
                     logprob_diffs[key] = summary
-    # Update summaries with highest risk
-    top = max(results, key=lambda x: x.hallucination_risk or 0.0)
-    summaries = {
-        "note": "Autopsy summary placeholder. Hook in heuristics later.",
-        "risk_highlight": f"Highest estimated hallucination risk: {top.model} ({top.hallucination_risk:.1f}/100)."
-    }
-    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs)
+                
+    # Compute semantic divergence for each pair
+    semantic_diffs = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            r1, r2 = results[i], results[j]
+            key = f"{r1.model}||{r2.model}"
+            semantic_diffs[key] = classify_semantic_divergence(r1.output_text, r2.output_text)
+                
+    # Compute aligned token data for pairs where both have logprobs
+    aligned_data = {}
+    for i in range(len(results)):
+        for j in range(i + 1, len(results)):
+            a = results[i]
+            b = results[j]
+            if a.logprobs is not None and b.logprobs is not None:
+                aligned = align_tokens_and_logprobs(a.tokens, a.logprobs, b.tokens, b.logprobs)
+                key = f"{a.model}||{b.model}"
+                aligned_data[key] = aligned
+            
+    # Update summaries with computed narrative
+    summaries = build_autopsy_summary(results, sim, logprob_diffs)
+    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs, semantic_diffs=semantic_diffs, aligned_logprobs=aligned_data)
     
 
 # Helper functions for experiment endpoint
@@ -256,11 +308,134 @@ def lp_stats(lp):
     arr = np.array(lp, dtype=float)
     return float(np.mean(arr)), float(np.std(arr)), float((arr < -2.5).mean())
 
+def build_autopsy_summary(results, sim_matrix, logprob_diffs):
+    """
+    results: list[ModelResult]
+    sim_matrix: dict[str, dict[str, float]]
+    logprob_diffs: dict["A||B" -> {mean_abs_diff, max_abs_diff, n_compared}]
+    Returns dict with keys:
+      summary (short paragraph),
+      highlights (list[str]),
+      top_model (str),
+      highest_risk (str, float),
+      closest_pair (tuple[str,str,float]),
+      farthest_pair (tuple[str,str,float])
+    """
+    if not results:
+        return {"summary": "No results.", "highlights": []}
+
+    # Highest risk
+    top = max(results, key=lambda r: (r.hallucination_risk or 0))
+    highest_risk = (top.model, float(top.hallucination_risk or 0.0))
+
+    # Similarity extremes
+    labels = [r.model for r in results]
+    closest = (None, None, -1.0)
+    farthest = (None, None, 2.0)
+    for a in labels:
+        for b in labels:
+            if a >= b:  # avoid dup/self
+                continue
+            s = sim_matrix.get(a, {}).get(b, 0.0)
+            if s > closest[2]:
+                closest = (a, b, float(s))
+            if s < farthest[2]:
+                farthest = (a, b, float(s))
+
+    # Logprob divergence (if available)
+    lp_note = None
+    if logprob_diffs:
+        pair, stats = max(logprob_diffs.items(), key=lambda kv: kv[1].get("mean_abs_diff", 0.0))
+        lp_note = f"Largest confidence gap: {pair} (mean |Δlogprob| {stats['mean_abs_diff']:.2f})."
+
+    # Compose
+    highlights = []
+    highlights.append(f"Highest estimated hallucination risk: {highest_risk[0]} ({highest_risk[1]:.1f}/100).")
+    if closest[0]:
+        highlights.append(f"Closest pair by meaning: {closest[0]} vs {closest[1]} (cos {closest[2]:.3f}).")
+    if farthest[0]:
+        highlights.append(f"Most divergent pair: {farthest[0]} vs {farthest[1]} (cos {farthest[2]:.3f}).")
+    if lp_note:
+        highlights.append(lp_note)
+
+    # Influence detection (simple)
+    if len(results) == 2:
+        r1, r2 = results
+        diff_temp = (r1.temperature != r2.temperature) if hasattr(r1, "temperature") and hasattr(r2, "temperature") else False
+        diff_sys = (r1.system_prompt != r2.system_prompt) if hasattr(r1, "system_prompt") and hasattr(r2, "system_prompt") else False
+        if diff_temp or diff_sys:
+            from sklearn.metrics.pairwise import cosine_similarity
+            sim = cosine_similarity([r1.embedding], [r2.embedding])[0,0] if r1.embedding and r2.embedding else None
+            risk_delta = (r2.hallucination_risk or 0) - (r1.hallucination_risk or 0)
+            if diff_temp:
+                summaries_note = f"Changing temperature from {r1.temperature} to {r2.temperature} changed similarity to {sim:.3f} and risk by {risk_delta:+.1f}."
+            elif diff_sys:
+                summaries_note = f"Changing system prompt altered similarity to {sim:.3f} and risk by {risk_delta:+.1f}."
+            else:
+                summaries_note = None
+            if summaries_note:
+                highlights.append(summaries_note)
+                influence_sentence = summaries_note
+            else:
+                influence_sentence = None
+        else:
+            influence_sentence = None
+    else:
+        influence_sentence = None
+
+    # Short paragraph
+    parts = []
+    parts.append(f"{len(results)} models compared.")
+    parts.append(highlights[0])
+    if closest[0]:
+        parts.append(f"{closest[0]} and {closest[1]} were most semantically aligned.")
+    if farthest[0]:
+        parts.append(f"{farthest[0]} and {farthest[1]} differed the most.")
+    if lp_note:
+        parts.append("Confidence varied across models; see logprob differences for details.")
+    summary = " ".join(parts)
+
+    # Choose a 'top_model' heuristic: lowest risk, highest similarity to group centroid
+    import numpy as np
+    vecs = [(r.model, np.array(r.embedding)) for r in results if r.embedding is not None]
+    top_model = highest_risk[0]
+    if vecs:
+        centroid = np.mean([v for _, v in vecs], axis=0, keepdims=True)
+        from sklearn.metrics.pairwise import cosine_similarity
+        sims = [(m, float(cosine_similarity(v.reshape(1,-1), centroid)[0,0])) for m, v in vecs]
+        # prefer low risk then high centroid similarity
+        def score(r):
+            risk = r.hallucination_risk or 0.0
+            sim = next((s for m,s in sims if m == r.model), 0.0)
+            return (-risk, sim)
+        best = max(results, key=score)
+        top_model = best.model
+
+    return {
+        "summary": summary,
+        "highlights": highlights,
+        "top_model": top_model,
+        "highest_risk": {"model": highest_risk[0], "score": highest_risk[1]},
+        "closest_pair": {"a": closest[0], "b": closest[1], "cosine": closest[2]},
+        "farthest_pair": {"a": farthest[0], "b": farthest[1], "cosine": farthest[2]},
+        "influence_sentence": influence_sentence
+    }
+
 def adapter_for(model):
-    name = model.lower()
-    if name.startswith("gpt"): return OpenAIAdapter(model)
-    if name.startswith("claude"): return AnthropicAdapter(model)
-    return OpenAIAdapter(model)
+    raw = model
+    name = model.strip()
+    key = name.lower()
+    for k, v in MODEL_ALIASES.items():
+        if key == k.lower():
+            name = v
+            break
+
+    lname = name.lower()
+    if lname.startswith("gpt"):
+        return OpenAIAdapter(name)
+    if lname.startswith("claude"):
+        return AnthropicAdapter(name)
+    return OpenAIAdapter(name)  # fallback
 
 @app.post("/experiment", response_model=ExperimentResponse)
 async def experiment(req: ExperimentRequest):

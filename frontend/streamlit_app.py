@@ -28,7 +28,18 @@ tab_main, tab_exp = st.tabs(["Main", "Experiments"])
 with st.sidebar:
     st.subheader("Settings")
     prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.")
-    models = st.multiselect("Models", ["gpt-4", "claude-3-opus", "gpt-4o"], default=["gpt-4", "claude-3-opus"])
+    models = st.multiselect(
+        "Models",
+        [
+            "gpt-5", "gpt-5-mini",
+            "gpt-4o", "gpt-4o-mini",
+            "claude-3.5-sonnet-2024-10-22",
+            "claude-3.5-sonnet-2024-06-20",
+            "claude-3.5-haiku",
+            "claude-3-haiku"
+        ],
+        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"]
+    )
     temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
     system_prompt = st.text_area("System prompt (optional)", "")
     run = st.button("Run Comparison")
@@ -61,11 +72,28 @@ with tab_main:
             with c:
                 st.markdown(f"**{r['model']}**")
                 st.code(r["output_text"])
+                # Highlight provider errors
+                if "ERROR:" in r["output_text"].upper():
+                    st.warning(f"Provider error for {r['model']}. See output above for details.")
                 st.markdown(f"**Hallucination risk:** {r['hallucination_risk']:.1f} / 100")
                 if r.get("hallucination_reasons"):
                     st.markdown("Reasons:")
                     for reason in r["hallucination_reasons"]:
                         st.markdown(f"- {reason}")
+                
+                # Display token usage and cost meta line
+                meta = []
+                if r.get("prompt_tokens") is not None:
+                    meta.append(f"prompt={r['prompt_tokens']}")
+                if r.get("completion_tokens") is not None:
+                    meta.append(f"completion={r['completion_tokens']}")
+                if r.get("total_tokens") is not None:
+                    meta.append(f"total={r['total_tokens']}")
+                if r.get("cost_usd") is not None:
+                    meta.append(f"~${r['cost_usd']:.6f}")
+                if meta:
+                    st.caption(" • ".join(meta))
+                
                 if r.get("logprobs") is not None:
                     fig = go.Figure()
                     fig.add_bar(x=list(range(len(r["logprobs"]))), y=r["logprobs"])
@@ -80,7 +108,37 @@ with tab_main:
         st.plotly_chart(heat, use_container_width=True)
 
         st.subheader("Autopsy summary")
-        st.write(data["summaries"])
+        summ = data.get("summaries", {})
+        rec = summ.get("top_model")
+        if rec:
+            st.markdown(
+                f"<div style='display:inline-block;padding:6px 10px;border-radius:8px;background:#eef6ff;border:1px solid #cfe3ff;font-weight:600;'>"
+                f"✅ Recommended model: {rec}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        if isinstance(summ, dict) and summ:
+            if "summary" in summ:
+                st.write(summ["summary"])
+            if "highlights" in summ and isinstance(summ["highlights"], list):
+                for h in summ["highlights"]:
+                    st.markdown(f"- {h}")
+            # Display influence sentence if available
+            if summ.get("influence_sentence"):
+                st.info(summ["influence_sentence"])
+            # Optional badges
+            meta_cols = st.columns(3)
+            hm = summ.get("highest_risk", {})
+            if hm:
+                meta_cols[0].metric("Highest risk", f"{hm.get('model','?')}", f"{hm.get('score',0):.1f}")
+            cp = summ.get("closest_pair", {})
+            if cp:
+                meta_cols[1].metric("Closest pair (cos)", f"{cp.get('a','?')} vs {cp.get('b','?')}", f"{cp.get('cosine',0):.3f}")
+            fp = summ.get("farthest_pair", {})
+            if fp:
+                meta_cols[2].metric("Most divergent (cos)", f"{fp.get('a','?')} vs {fp.get('b','?')}", f"{fp.get('cosine',0):.3f}")
+        else:
+            st.info("No summary available yet.")
 
         st.subheader("Hallucination risk by model")
         risk_fig = go.Figure(go.Bar(x=[res['hallucination_risk'] for res in data['results']],
@@ -111,6 +169,26 @@ with tab_main:
             for pair, stats in data["logprob_diffs"].items():
                 st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
 
+        # Semantic divergence (heuristics)
+        sd = data.get("semantic_diffs", {})
+        if sd:
+            st.subheader("Semantic divergence (heuristics)")
+            for pair, scores in sd.items():
+                # Show top 2 labels by score
+                top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:2]
+                tags = " • ".join([f"{k}: {v:.2f}" for k,v in top])
+                st.markdown(f"**{pair}** — {tags}")
+
+# Display aligned token data as tables
+        apairs = data.get("aligned_logprobs", {})
+        if apairs:
+            for pair, rows in apairs.items():
+                st.markdown(f"**Token logprob diff for {pair}**")
+                st.dataframe(
+                    [{"A_token": a, "A_lp": la, "B_token": b, "B_lp": lb, "Δlp": diff}
+                     for (a, la, b, lb, diff) in rows[:50]],  # limit to first 50 rows
+                    use_container_width=True
+                )
         # Autopsy Report section
         def make_markdown_report(data, original_prompt, system_prompt):
             import datetime
@@ -124,6 +202,20 @@ with tab_main:
             report += f"**Prompt:**\n\n```\n{original_prompt}\n```\n\n"
             if system_prompt:
                 report += f"**System Prompt:**\n\n```\n{system_prompt}\n```\n\n"
+            
+            # Summary information
+            summ = data.get("summaries", {}) if isinstance(data, dict) else {}
+            hl = summ.get("highlights", []) if isinstance(summ, dict) else []
+            
+            report += "## Autopsy Summary\n"
+            report += f"{summ.get('summary', 'No summary available.')}\n\n"
+            
+            report += "### Highlights\n"
+            report += f"{chr(10).join(['- ' + str(x) for x in hl]) if hl else '_None_'}\n\n"
+            
+            # Optional metrics
+            report += f"- **Recommended model:** {summ.get('top_model', 'N/A')}\n"
+            report += f"- **Highest risk:** { (summ.get('highest_risk') or {}).get('model', 'N/A') } ({ (summ.get('highest_risk') or {}).get('score', 'N/A') })\n\n"
             
             # Models compared
             models = [r['model'] for r in data['results']]
@@ -162,7 +254,16 @@ with tab_main:
                     for reason in r['hallucination_reasons']:
                         report += f"  - {reason}\n"
                 report += "\n"
-            
+             
+            # Semantic divergence (heuristics)
+            sd = data.get("semantic_diffs", {})
+            if sd:
+                report += "\n## Semantic divergence (heuristics)\n"
+                for pair, scores in sd.items():
+                    ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+                    line = ", ".join([f"{k}: {v:.2f}" for k,v in ordered])
+                    report += f"- **{pair}** — {line}\n"
+             
             # Pairwise diffs
             if data.get('token_diffs'):
                 for pair_key, diff_data in data['token_diffs'].items():
@@ -180,11 +281,27 @@ with tab_main:
             file_name="prompt_autopsy_report.md",
             mime="text/markdown"
         )
+        
+        # Display total estimated cost
+        total_cost = sum([r.get("cost_usd") or 0.0 for r in data.get("results", [])])
+        st.markdown(f"**Estimated total cost:** ~${total_cost:.6f}")
 
 with tab_exp:
     st.subheader("Experiments")
     e_prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.", key="exp_prompt")
-    e_models = st.multiselect("Models", ["gpt-4","gpt-4o","claude-3-opus"], default=["gpt-4","claude-3-opus"], key="exp_models")
+    e_models = st.multiselect(
+        "Models",
+        [
+            "gpt-5", "gpt-5-mini",
+            "gpt-4o", "gpt-4o-mini",
+            "claude-3.5-sonnet-2024-10-22",
+            "claude-3.5-sonnet-2024-06-20",
+            "claude-3.5-haiku",
+            "claude-3-haiku"
+        ],
+        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
+        key="exp_models"
+    )
     temps_str = st.text_input("Temperatures (comma separated)", "0.2,0.7", key="exp_temps")
     sys_multi = st.text_area("System prompts (one per line; blank allowed)", "", key="exp_sys")
     seeds_str = st.text_input("Seeds (optional, comma separated)", "", key="exp_seeds")
