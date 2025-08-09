@@ -177,14 +177,45 @@ def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
     
     return ExperimentResponse(runs=runs, drift=drift)
 
+# Model alias mapping for robustness to model ID changes
+MODEL_ALIASES = {
+    # OpenAI old → current
+    "gpt4": "gpt-4o",
+    "gpt-4": "gpt-4o",
+    "gpt-4-turbo": "gpt-4o",
+    "gpt-3.5-turbo": "gpt-4o-mini",
+
+    # GPT-5 variants mapping
+    "gpt5": "gpt-5",
+    "gpt-5-turbo": "gpt-5",
+    "gpt-5-preview": "gpt-5",
+
+    # Anthropic generic → exact
+    "claude-3-opus": "claude-3-opus-20240229",
+    "claude-opus": "claude-3-opus-20240229",
+    "claude-3-sonnet": "claude-3.5-sonnet-2024-10-22",
+    "claude-sonnet": "claude-3.5-sonnet-2024-10-22",
+    "claude-sonnet-3.7": "claude-3-sonnet-20240229",
+    "claude-3.5-sonnet": "claude-3.5-sonnet-2024-10-22",
+    "claude-3.5-haiku": "claude-3.5-haiku",
+    "claude-3-haiku": "claude-3-haiku"
+}
+
 def get_adapter(model_name: str):
-    name = model_name.lower()
-    if name.startswith("gpt"):
-        return OpenAIAdapter(model_name)
-    if name.startswith("claude"):
-        return AnthropicAdapter(model_name)
-    # default stub
-    return OpenAIAdapter(model_name)
+    raw = model_name
+    name = model_name.strip()
+    key = name.lower()
+    for k, v in MODEL_ALIASES.items():
+        if key == k.lower():
+            name = v
+            break
+
+    lname = name.lower()
+    if lname.startswith("gpt"):
+        return OpenAIAdapter(name)
+    if lname.startswith("claude"):
+        return AnthropicAdapter(name)
+    return OpenAIAdapter(name)  # fallback
 
 @app.post("/compare", response_model=CompareResponse)
 def compare(req: CompareRequest):
@@ -257,10 +288,20 @@ def lp_stats(lp):
     return float(np.mean(arr)), float(np.std(arr)), float((arr < -2.5).mean())
 
 def adapter_for(model):
-    name = model.lower()
-    if name.startswith("gpt"): return OpenAIAdapter(model)
-    if name.startswith("claude"): return AnthropicAdapter(model)
-    return OpenAIAdapter(model)
+    raw = model
+    name = model.strip()
+    key = name.lower()
+    for k, v in MODEL_ALIASES.items():
+        if key == k.lower():
+            name = v
+            break
+
+    lname = name.lower()
+    if lname.startswith("gpt"):
+        return OpenAIAdapter(name)
+    if lname.startswith("claude"):
+        return AnthropicAdapter(name)
+    return OpenAIAdapter(name)  # fallback
 
 @app.post("/experiment", response_model=ExperimentResponse)
 async def experiment(req: ExperimentRequest):

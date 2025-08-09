@@ -28,7 +28,20 @@ tab_main, tab_exp = st.tabs(["Main", "Experiments"])
 with st.sidebar:
     st.subheader("Settings")
     prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.")
-    models = st.multiselect("Models", ["gpt-4", "claude-3-opus", "gpt-4o"], default=["gpt-4", "claude-3-opus"])
+    models = st.multiselect(
+        "Models",
+        [
+            # OpenAI
+            "gpt-5", "gpt-5-mini",
+            "gpt-4o", "gpt-4o-mini",
+            # Anthropic (update to match your account exactly)
+            "claude-3.5-sonnet-2024-10-22",
+            "claude-3.5-sonnet-2024-06-20",
+            "claude-3.5-haiku",
+            "claude-3-haiku"
+        ],
+        default=["gpt-5", "claude-3.5-sonnet-2024-10-22"]
+    )
     temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
     system_prompt = st.text_area("System prompt (optional)", "")
     run = st.button("Run Comparison")
@@ -61,6 +74,9 @@ with tab_main:
             with c:
                 st.markdown(f"**{r['model']}**")
                 st.code(r["output_text"])
+                # Highlight provider errors
+                if "ERROR:" in r["output_text"].upper():
+                    st.warning("Provider error detected in model response")
                 st.markdown(f"**Hallucination risk:** {r['hallucination_risk']:.1f} / 100")
                 if r.get("hallucination_reasons"):
                     st.markdown("Reasons:")
@@ -184,7 +200,21 @@ with tab_main:
 with tab_exp:
     st.subheader("Experiments")
     e_prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.", key="exp_prompt")
-    e_models = st.multiselect("Models", ["gpt-4","gpt-4o","claude-3-opus"], default=["gpt-4","claude-3-opus"], key="exp_models")
+    e_models = st.multiselect(
+        "Models",
+        [
+            # OpenAI
+            "gpt-5", "gpt-5-mini",
+            "gpt-4o", "gpt-4o-mini",
+            # Anthropic (update to match your account exactly)
+            "claude-3.5-sonnet-2024-10-22",
+            "claude-3.5-sonnet-2024-06-20",
+            "claude-3.5-haiku",
+            "claude-3-haiku"
+        ],
+        default=["gpt-5", "claude-3.5-sonnet-2024-10-22"],
+        key="exp_models"
+    )
     temps_str = st.text_input("Temperatures (comma separated)", "0.2,0.7", key="exp_temps")
     sys_multi = st.text_area("System prompts (one per line; blank allowed)", "", key="exp_sys")
     seeds_str = st.text_input("Seeds (optional, comma separated)", "", key="exp_seeds")

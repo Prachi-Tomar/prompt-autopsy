@@ -49,10 +49,10 @@ class AnthropicAdapter(LLMAdapter):
             }
             
         except Exception as e:
-            error_msg = f"[ERROR: {str(e)}]"
+            err = f"[Anthropic ERROR: {type(e).__name__}] {e}"
             logger.error(f"Anthropic API error: {str(e)}")
             return {
-                "output_text": error_msg,
-                "tokens": error_msg.split(),
+                "output_text": err,
+                "tokens": err.split(),
                 "logprobs": None
             }

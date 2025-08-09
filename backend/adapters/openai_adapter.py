@@ -66,10 +66,10 @@ class OpenAIAdapter(LLMAdapter):
             }
             
         except Exception as e:
-            error_msg = f"[ERROR: {str(e)}]"
+            err = f"[OpenAI ERROR: {type(e).__name__}] {e}"
             logger.error(f"OpenAI API error: {str(e)}")
             return {
-                "output_text": error_msg,
-                "tokens": error_msg.split(),
+                "output_text": err,
+                "tokens": err.split(),
                 "logprobs": None
             }
