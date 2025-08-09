@@ -1,75 +1,86 @@
-import openai
 from typing import Optional, Dict, Any, List
 from .base import LLMAdapter
-from ..utils.settings import OPENAI_API_KEY
-import logging
+from backend.utils import settings
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# OpenAI SDK v1.x
+try:
+    from openai import OpenAI
+    _openai_client = OpenAI(api_key=settings.OPENAI_API_KEY or None)
+except Exception:
+    _openai_client = None
+
+def _extract_logprobs_from_chat(resp) -> Dict[str, Any]:
+    """
+    Extracts output_text, tokens, and token logprobs from Chat Completions response (SDK v1.x).
+    Returns dict with keys: output_text, tokens, logprobs (or None).
+    """
+    try:
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        tokens: List[str] = []
+        lps: List[float] = []
+
+        # Newer SDKs expose choice.logprobs.content as a list of items with .token and .logprob
+        lp_content = getattr(choice, "logprobs", None)
+        if lp_content and getattr(lp_content, "content", None):
+            for item in lp_content.content:
+                tok = getattr(item, "token", None)
+                lp = getattr(item, "logprob", None)
+                if tok is not None:
+                    tokens.append(tok)
+                    lps.append(float(lp) if lp is not None else None)
+
+        # Fallback: if no per-token info, at least return text tokens
+        if not tokens:
+            tokens = text.split()
+            lps = []  # logprobs unsupported
+
+        return {"output_text": text, "tokens": tokens, "logprobs": lps if lps else None}
+    except Exception:
+        # Extremely defensive fallback
+        txt = resp.choices[0].message.content if resp and resp.choices else ""
+        return {"output_text": txt, "tokens": txt.split(), "logprobs": None}
 
 class OpenAIAdapter(LLMAdapter):
     def __init__(self, model_name: str):
         self.model_name = model_name
-        self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
     def generate(self, prompt: str, temperature: float = 0.2, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+        if not _openai_client or not settings.OPENAI_API_KEY:
+            err = "[OpenAI ERROR] No SDK or OPENAI_API_KEY configured."
+            return {"output_text": err, "tokens": err.split(), "logprobs": None}
+
+        # Build messages
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # Try Chat Completions first (works with gpt-4o, gpt-4o-mini, and typically gpt-5 if enabled)
         try:
-            # Prepare messages
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            
-            # Determine if logprobs are supported
-            logprobs_supported = self.model_name in ["gpt-4", "gpt-4o"]
-            
-            # Prepare parameters for API call
-            api_params = {
-                "model": self.model_name,
-                "messages": messages,
-                "temperature": temperature
-            }
-            
-            # Add logprobs if supported
-            if logprobs_supported:
-                api_params["logprobs"] = True
-                api_params["top_logprobs"] = 1
-            
-            # Make API call
-            response = self.client.chat.completions.create(**api_params)
-            
-            # Extract content
-            output_text = response.choices[0].message.content
-            
-            # Log token count
-            if hasattr(response, 'usage') and response.usage:
-                logger.info(f"OpenAI {self.model_name} - Tokens: {response.usage.total_tokens}")
-            
-            # Tokenize output
-            tokens = output_text.split()
-            
-            # Extract logprobs if available
-            logprobs_list = None
-            if logprobs_supported and response.choices[0].logprobs:
-                logprobs_list = []
-                for content in response.choices[0].logprobs.content:
-                    if content.top_logprobs:
-                        logprobs_list.append(content.top_logprobs[0].logprob)
-                    else:
-                        logprobs_list.append(None)
-            
-            return {
-                "output_text": output_text,
-                "tokens": tokens,
-                "logprobs": logprobs_list
-            }
-            
-        except Exception as e:
-            err = f"[OpenAI ERROR: {type(e).__name__}] {e}"
-            logger.error(f"OpenAI API error: {str(e)}")
-            return {
-                "output_text": err,
-                "tokens": err.split(),
-                "logprobs": None
-            }
+            resp = _openai_client.chat.completions.create(
+                model=self.model_name,                 # e.g., "gpt-5", "gpt-5-mini", "gpt-4o"
+                messages=messages,
+                temperature=temperature,
+                # Logprobs are supported on many chat models; if not, API will ignore or error
+                logprobs=True,
+                top_logprobs=5
+            )
+            parsed = _extract_logprobs_from_chat(resp)
+            return parsed
+
+        except Exception as e_chat:
+            # If the model is missing or logprobs unsupported, retry without logprobs
+            try:
+                resp = _openai_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature
+                )
+                parsed = _extract_logprobs_from_chat(resp)
+                # Ensure we mark logprobs as None in this path
+                parsed["logprobs"] = None
+                return parsed
+            except Exception as e_final:
+                err = f"[OpenAI ERROR: {type(e_final).__name__}] {e_final}"
+                return {"output_text": err, "tokens": err.split(), "logprobs": None}
