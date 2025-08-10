@@ -21,13 +21,29 @@ st.markdown("""
 .pa-ins { background: rgba(0,128,0,0.15); padding: 2px; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+.pa-tip { position: relative; display:inline-block; cursor: help; border-bottom: 1px dotted #888; }
+.pa-tip:hover .pa-tiptext { visibility: visible; opacity: 1; }
+.pa-tip .pa-tiptext {
+  visibility: hidden; opacity: 0; transition: opacity .2s;
+  position: absolute; z-index: 10; width: 260px;
+  background: #111; color: #fff; padding: 8px 10px; border-radius: 6px;
+  bottom: 125%; left: 50%; transform: translateX(-50%);
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Tabs
 tab_main, tab_exp = st.tabs(["Main", "Experiments"])
 
 with st.sidebar:
     st.subheader("Settings")
-    prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.")
+    prompt = st.text_area(
+        "Prompt",
+        "Explain quantum computing in simple terms.",
+        help="The actual question or task to send to the models."
+    )
     models = st.multiselect(
         "Models",
         [
@@ -38,10 +54,19 @@ with st.sidebar:
             "claude-3.5-haiku",
             "claude-3-haiku"
         ],
-        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"]
+        default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
+        help="Choose one or more LLMs to compare. The same prompt will be sent to each."
     )
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
-    system_prompt = st.text_area("System prompt (optional)", "")
+    temperature = st.slider(
+        "Temperature",
+        0.0, 1.0, 0.2, 0.1,
+        help="Higher = more random output. Lower = more deterministic."
+    )
+    system_prompt = st.text_area(
+        "System prompt (optional)",
+        "",
+        help="Optional background instruction for the model, e.g. 'You are an expert financial advisor.'"
+    )
     run = st.button("Run Comparison")
 
 # Initialize data to None
@@ -103,6 +128,7 @@ with tab_main:
                 # Display fact-check information
                 fc = r.get("factcheck")
                 if fc:
+                    st.markdown("<span class='pa-tip'>Fact-check<span class='pa-tiptext'>Quick Wikipedia-based check of factual claims. Not authoritative; for reference only.</span></span>", unsafe_allow_html=True)
                     st.markdown(f"**Fact-check:** ✅ {fc['supported']} supported • ⚠️ {fc['ambiguous']} ambiguous • ❌ {fc['unsupported']} unsupported")
                     with st.expander("Claims & evidence"):
                         for item in fc.get("claims", [])[:10]:
@@ -115,7 +141,16 @@ with tab_main:
         heat.update_layout(height=400)
         st.plotly_chart(heat, use_container_width=True)
 
-        st.subheader("Autopsy summary")
+        st.markdown("<span class='pa-tip'>Autopsy summary<span class='pa-tiptext'>High-level narrative of how models differed, including risk, similarity, and key differences.</span></span>", unsafe_allow_html=True)
+        # Main tab glossary
+        with st.expander("What do these metrics mean? (Glossary)"):
+            st.markdown("""
+- **Hallucination risk** — Heuristic score estimating likelihood of unsupported claims.
+- **Similarity (cosine)** — 1.0 = same meaning, 0.0 = unrelated.
+- **Logprob differences** — Token-by-token confidence gap between models.
+- **Semantic divergence** — Estimates if differences are style, omissions, contradictions, etc.
+- **Fact-check** — Quick Wikipedia-based verification of factual claims.
+            """)
         summ = data.get("summaries", {})
         rec = summ.get("top_model")
         if rec:
@@ -138,13 +173,28 @@ with tab_main:
             meta_cols = st.columns(3)
             hm = summ.get("highest_risk", {})
             if hm:
-                meta_cols[0].metric("Highest risk", f"{hm.get('model','?')}", f"{hm.get('score',0):.1f}")
+                meta_cols[0].metric(
+                    "Highest risk",
+                    f"{hm.get('model','?')}",
+                    f"{hm.get('score',0):.1f}",
+                    help="Model with the highest estimated hallucination risk score."
+                )
             cp = summ.get("closest_pair", {})
             if cp:
-                meta_cols[1].metric("Closest pair (cos)", f"{cp.get('a','?')} vs {cp.get('b','?')}", f"{cp.get('cosine',0):.3f}")
+                meta_cols[1].metric(
+                    "Closest pair (cos)",
+                    f"{cp.get('a','?')} vs {cp.get('b','?')}",
+                    f"{cp.get('cosine',0):.3f}",
+                    help="Pair of models whose responses are most semantically similar (cosine similarity)."
+                )
             fp = summ.get("farthest_pair", {})
             if fp:
-                meta_cols[2].metric("Most divergent (cos)", f"{fp.get('a','?')} vs {fp.get('b','?')}", f"{fp.get('cosine',0):.3f}")
+                meta_cols[2].metric(
+                    "Most divergent (cos)",
+                    f"{fp.get('a','?')} vs {fp.get('b','?')}",
+                    f"{fp.get('cosine',0):.3f}",
+                    help="Pair of models whose responses differ most in meaning."
+                )
         else:
             st.info("No summary available yet.")
 
@@ -173,14 +223,14 @@ with tab_main:
             st.info("Token diffs are only available when comparing multiple models. Select at least two models to see diffs.")
 
         if data.get("logprob_diffs"):
-            st.subheader("Logprob differences between models")
+            st.markdown("<span class='pa-tip'>Logprob differences between models<span class='pa-tiptext'>How confident each model was in generating each token. Large differences may indicate uncertainty or stylistic variation.</span></span>", unsafe_allow_html=True)
             for pair, stats in data["logprob_diffs"].items():
                 st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
 
         # Semantic divergence (heuristics)
         sd = data.get("semantic_diffs", {})
         if sd:
-            st.subheader("Semantic divergence (heuristics)")
+            st.markdown("<span class='pa-tip'>Semantic divergence (heuristics)<span class='pa-tiptext'>Estimates the nature of differences between responses, e.g., omissions, contradictions, or rewording.</span></span>", unsafe_allow_html=True)
             for pair, scores in sd.items():
                 # Show top 2 labels by score
                 top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:2]
@@ -317,28 +367,63 @@ with tab_main:
 
 with tab_exp:
     st.subheader("Experiments")
-    e_prompt = st.text_area("Prompt", "Explain quantum computing in simple terms.", key="exp_prompt")
+    with st.expander("What do these settings mean? (Glossary)"):
+        st.markdown("""
+- **Model** — The LLM you're testing (OpenAI/Anthropic etc.).
+- **Prompt** — The question or instruction sent to the models.
+- **System prompt** — Hidden preface that sets role/tone (e.g., "You are a concise teacher.").
+- **Temperature** — Randomness. Low = consistent; high = creative (and sometimes riskier).
+- **Seed** — Controls the random path. If supported, same seed + same settings ≈ same output.
+- **Hallucination risk** — Heuristic score estimating likelihood of unsupported claims.
+- **Stability** — How similar a run is to that model's average answer (cosine similarity).
+- **Similarity (cosine)** — 1.0 = same meaning, 0.0 = unrelated.
+- **Parameter influence** — How much changing a setting (temp/system prompt) shifts meaning and risk.
+        """)
+    e_prompt = st.text_area(
+        "Prompt",
+        "Explain quantum computing in simple terms.",
+        key="exp_prompt",
+        help="The question/task sent to every run in the grid."
+    )
     e_models = st.multiselect(
         "Models",
-        [
-            "gpt-5", "gpt-5-mini",
-            "gpt-4o", "gpt-4o-mini",
-            "claude-3.5-sonnet-2024-10-22",
-            "claude-3.5-sonnet-2024-06-20",
-            "claude-3.5-haiku",
-            "claude-3-haiku"
-        ],
+        ["gpt-5","gpt-5-mini","gpt-4o","gpt-4o-mini","claude-3.5-sonnet-2024-10-22","claude-3.5-sonnet-2024-06-20","claude-3.5-haiku","claude-3-haiku"],
         default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
-        key="exp_models"
+        key="exp_models",
+        help="Pick the models to test. Each model is run with every temperature/system prompt/seed you specify."
     )
-    temps_str = st.text_input("Temperatures (comma separated)", "0.2,0.7", key="exp_temps")
-    sys_multi = st.text_area("System prompts (one per line; blank allowed)", "", key="exp_sys")
-    seeds_str = st.text_input("Seeds (optional, comma separated)", "", key="exp_seeds")
+    temps_str = st.text_input(
+        "Temperatures (comma separated)",
+        "0.2,0.7",
+        key="exp_temps",
+        help="Controls randomness: lower = more deterministic; higher = more creative. We'll test each value."
+    )
+    sys_multi = st.text_area(
+        "System prompts (one per line; blank allowed)",
+        "",
+        key="exp_sys",
+        help="Optional hidden instruction that sets role/style. Put each variant on its own line. Leave empty to use the model default."
+    )
+    seeds_str = st.text_input(
+        "Seeds (optional, comma separated)",
+        "",
+        key="exp_seeds",
+        help="If supported, using the same seed makes runs repeatable at the same temperature. Leave blank to ignore."
+    )
 
+    st.button(
+        "Run Experiments",
+        help="Runs the full grid: models × temperatures × system prompts × seeds."
+    )
+    
+    if "gpt-5" in e_models:
+        st.caption("Note: Some GPT-5 variants force default temperature. If set, we'll ignore custom temperature for that model.")
+        
+    temps = [float(x.strip()) for x in temps_str.split(",") if x.strip()]
+    sys_list = [s if s.strip() else "" for s in sys_multi.splitlines()] or [""]
+    seeds = [int(x.strip()) for x in seeds_str.split(",") if x.strip()] if seeds_str.strip() else []
+    
     if st.button("Run Experiments"):
-        temps = [float(x.strip()) for x in temps_str.split(",") if x.strip()]
-        sys_list = [s if s.strip() else "" for s in sys_multi.splitlines()] or [""]
-        seeds = [int(x.strip()) for x in seeds_str.split(",") if x.strip()] if seeds_str.strip() else []
         payload = {"prompt": e_prompt, "models": e_models, "temperatures": temps, "system_prompts": sys_list, "seeds": seeds}
         try:
             resp = requests.post(f"{get_backend_host()}/experiment", json=payload, timeout=600)
@@ -370,10 +455,11 @@ with tab_exp:
                 "logprob_frac_low": r.get("logprob_frac_low"),
             })
         df = pd.DataFrame(rows)
+        st.subheader("Results table", help="Each row is one run with its settings, risk, and latency.")
         st.dataframe(df, use_container_width=True)
 
         # Risk by temperature chart (grouped bars per model)
-        st.subheader("Risk by temperature")
+        st.subheader("Risk by temperature", help="Average hallucination risk per model at each temperature. Higher bars suggest risk increases with randomness.")
         by_temp = exp["drift"]["by_temperature"]
         # Build arrays
         fig_rt = go.Figure()
@@ -385,7 +471,7 @@ with tab_exp:
         st.plotly_chart(fig_rt, use_container_width=True)
 
         # Stability line chart per model
-        st.subheader("Stability (cosine to centroid)")
+        st.subheader("Stability (cosine to centroid)", help="How close each run is to that model's 'typical' answer. Higher = more consistent.")
         stab = exp["drift"]["stability"]
         fig_stab = go.Figure()
         for m, vals in stab.items():
@@ -394,7 +480,7 @@ with tab_exp:
         st.plotly_chart(fig_stab, use_container_width=True)
 
         # Risk vs Stability scatter
-        st.subheader("Risk vs stability")
+        st.subheader("Risk vs stability", help="Tradeoff view: faster isn't always safer. Points to the right are riskier; higher is slower.")
         xs, ys, names = [], [], []
         for r in exp["runs"]:
             xs.append(r["hallucination_risk"])
@@ -411,7 +497,7 @@ with tab_exp:
 # Parameter influence (auto-detected)
         pi = exp.get("drift", {}).get("parameter_influence")
         if pi:
-            st.subheader("Parameter influence (auto-detected)")
+            st.subheader("Parameter influence (auto-detected)", help="How much changing temperature or system prompt shifts meaning (similarity) and risk compared to a baseline.")
             for param, models_map in pi.items():
                 st.markdown(f"**{param.capitalize()}**")
                 for model, vals in models_map.items():
