@@ -14,6 +14,12 @@ from backend.utils.settings import MOCK_MODE
 from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
 from backend.analysis.parameter_influence import compute_parameter_influence
 from backend.analysis.semantic_diff import classify_semantic_divergence
+from backend.analysis.factcheck import analyze_factcheck
+from backend.analysis.claims import extract_candidate_claims
+from backend.analysis.factcheck import verify_claims
+import os
+
+FACTCHECK_ON = os.getenv("FACTCHECK", "0") == "1"
 
 app = FastAPI(title="Prompt Autopsy API")
 
@@ -55,7 +61,16 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
             logprobs=logprobs,
             embedding=embedding,
             hallucination_risk=hallucination_risk,
-            hallucination_reasons=reasons
+            hallucination_reasons=reasons,
+            factcheck={
+                "supported": 5,
+                "unsupported": 2,
+                "ambiguous": 3,
+                "claims": [
+                    {"claim": "Quantum computing uses qubits", "verdict": "supported", "evidence": "Well-established fact"},
+                    {"claim": "qubits can be both 0 and 1 at once", "verdict": "supported", "evidence": "Quantum superposition principle"}
+                ]
+            } if FACTCHECK_ON else None
         ))
     
     # Create embedding similarity matrix (2x2 with 1.0 diagonal and ~0.90 off-diagonal)
@@ -67,7 +82,12 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
     # Summaries with risk_highlight
     summaries = {
         "note": "This is a mock response for demonstration purposes.",
-        "risk_highlight": "Highest estimated hallucination risk: claude-3-opus (28.7/100)."
+        "risk_highlight": "Highest estimated hallucination risk: claude-3-opus (28.7/100).",
+        "factcheck_summary": {
+            "supported": 10,
+            "unsupported": 4,
+            "ambiguous": 6
+        } if FACTCHECK_ON else None
     }
     
     # Token diffs
@@ -105,7 +125,8 @@ def mock_compare_response(req: CompareRequest) -> CompareResponse:
         summaries=summaries,
         token_diffs=token_diffs,
         logprob_diffs=logprob_diffs,
-        semantic_diffs=semantic_diffs
+        semantic_diffs=semantic_diffs,
+        factcheck_summary=summaries.get("factcheck_summary")
     )
 
 def mock_experiment_response(req: ExperimentRequest) -> ExperimentResponse:
@@ -256,6 +277,13 @@ def compare(req: CompareRequest):
         risk, reasons = compute_hallucination_risk(r.output_text, r.logprobs, neighbor_cos)
         r.hallucination_risk = risk
         r.hallucination_reasons = reasons
+        
+        # Add fact-check data
+        if FACTCHECK_ON:
+            cands = extract_candidate_claims(r.output_text or "")
+            r.factcheck = verify_claims(cands)
+        else:
+            r.factcheck = None
 
     # Compute pairwise diffs
     token_diffs = {}
@@ -299,7 +327,20 @@ def compare(req: CompareRequest):
             
     # Update summaries with computed narrative
     summaries = build_autopsy_summary(results, sim, logprob_diffs)
-    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs, semantic_diffs=semantic_diffs, aligned_logprobs=aligned_data)
+    
+    # Also build an aggregate for CompareResponse:
+    if FACTCHECK_ON:
+        agg = {"supported":0,"unsupported":0,"ambiguous":0}
+        for r in results:
+            if r.factcheck:
+                agg["supported"] += r.factcheck["supported"]
+                agg["unsupported"] += r.factcheck["unsupported"]
+                agg["ambiguous"] += r.factcheck["ambiguous"]
+        fact_summary = agg
+    else:
+        fact_summary = None
+        
+    return CompareResponse(results=results, embedding_similarity=sim, summaries=summaries, token_diffs=token_diffs, logprob_diffs=logprob_diffs, semantic_diffs=semantic_diffs, aligned_logprobs=aligned_data, factcheck_summary=fact_summary)
     
 
 # Helper functions for experiment endpoint
@@ -394,6 +435,20 @@ def build_autopsy_summary(results, sim_matrix, logprob_diffs):
     if lp_note:
         parts.append("Confidence varied across models; see logprob differences for details.")
     summary = " ".join(parts)
+    
+    # Aggregate fact-check results for summary
+    if FACTCHECK_ON:
+        total_supported = sum(r.factcheck.get("supported", 0) if r.factcheck else 0 for r in results)
+        total_unsupported = sum(r.factcheck.get("unsupported", 0) if r.factcheck else 0 for r in results)
+        total_ambiguous = sum(r.factcheck.get("ambiguous", 0) if r.factcheck else 0 for r in results)
+        
+        factcheck_summary = {
+            "supported": total_supported,
+            "unsupported": total_unsupported,
+            "ambiguous": total_ambiguous
+        }
+    else:
+        factcheck_summary = None
 
     # Choose a 'top_model' heuristic: lowest risk, highest similarity to group centroid
     import numpy as np
@@ -418,7 +473,8 @@ def build_autopsy_summary(results, sim_matrix, logprob_diffs):
         "highest_risk": {"model": highest_risk[0], "score": highest_risk[1]},
         "closest_pair": {"a": closest[0], "b": closest[1], "cosine": closest[2]},
         "farthest_pair": {"a": farthest[0], "b": farthest[1], "cosine": farthest[2]},
-        "influence_sentence": influence_sentence
+        "influence_sentence": influence_sentence,
+        "factcheck_summary": factcheck_summary
     }
 
 def adapter_for(model):

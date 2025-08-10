@@ -31,6 +31,8 @@ It computes per-model drift and stability metrics to help you understand how dif
 - Logprobs are placeholders and may depend on model support
 - Embeddings computed with sentence-transformers
 - Use at your own risk. MIT licensed.
+- Fact-checking uses Wikipedia and simple heuristics; it's not authoritative.
+- Network calls may be slow; can be disabled via FACTCHECK=0.
 
 ### Cost estimates
 Costs are estimated from editable tables in `backend/analysis/pricing.py` (USD per 1K tokens). Update them to match your account's pricing. Estimates are informational only.

@@ -99,6 +99,14 @@ with tab_main:
                     fig.add_bar(x=list(range(len(r["logprobs"]))), y=r["logprobs"])
                     fig.update_layout(title="Logprobs (placeholder)")
                     st.plotly_chart(fig, use_container_width=True)
+                
+                # Display fact-check information
+                fc = r.get("factcheck")
+                if fc:
+                    st.markdown(f"**Fact-check:** ✅ {fc['supported']} supported • ⚠️ {fc['ambiguous']} ambiguous • ❌ {fc['unsupported']} unsupported")
+                    with st.expander("Claims & evidence"):
+                        for item in fc.get("claims", [])[:10]:
+                            st.markdown(f"- **{item['verdict']}** — {item['claim']}" + (f"  _(source: {item['evidence']})_" if item.get('evidence') else ""))
 
         st.subheader("Embedding similarity")
         labels = [r["model"] for r in data["results"]]
@@ -264,6 +272,22 @@ with tab_main:
                     line = ", ".join([f"{k}: {v:.2f}" for k,v in ordered])
                     report += f"- **{pair}** — {line}\n"
              
+            # Fact-check summary
+            if data.get("factcheck_summary"):
+                s = data["factcheck_summary"]
+                report += "\n## Fact-check Summary\n"
+                report += f"Supported: {s['supported']}, Ambiguous: {s['ambiguous']}, Unsupported: {s['unsupported']}\n"
+            
+            # Per-model fact-check details
+            for r in data.get("results", []):
+                fc = r.get("factcheck")
+                if not fc: continue
+                report += f"\n### Fact-check — {r['model']}\n"
+                report += f"Supported: {fc['supported']}, Ambiguous: {fc['ambiguous']}, Unsupported: {fc['unsupported']}\n"
+                for item in fc.get("claims", [])[:10]:
+                    src = f" (source: {item['evidence']})" if item.get("evidence") else ""
+                    report += f"- **{item['verdict']}** — {item['claim']}{src}\n"
+            
             # Pairwise diffs
             if data.get('token_diffs'):
                 for pair_key, diff_data in data['token_diffs'].items():
@@ -285,6 +309,11 @@ with tab_main:
         # Display total estimated cost
         total_cost = sum([r.get("cost_usd") or 0.0 for r in data.get("results", [])])
         st.markdown(f"**Estimated total cost:** ~${total_cost:.6f}")
+        
+        # Display aggregate fact-check summary
+        if data.get("factcheck_summary"):
+            s = data["factcheck_summary"]
+            st.markdown(f"**Fact-check (aggregate):** ✅ {s['supported']} • ⚠️ {s['ambiguous']} • ❌ {s['unsupported']}")
 
 with tab_exp:
     st.subheader("Experiments")

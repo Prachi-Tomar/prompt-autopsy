@@ -19,6 +19,7 @@ class ModelResult(BaseModel):
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
+    factcheck: dict | None = None   # {"supported":int,"unsupported":int,"ambiguous":int,"claims":[{claim, verdict, evidence}]}
 
 class CompareResponse(BaseModel):
     results: List[ModelResult]
@@ -28,6 +29,7 @@ class CompareResponse(BaseModel):
     logprob_diffs: Dict[str, Dict[str, float]] = {}
     semantic_diffs: Dict[str, Dict[str, float]] = {}
     aligned_logprobs: Dict[str, List[Tuple[Optional[str], Optional[float], Optional[str], Optional[float], Optional[float]]]] = {}
+    factcheck_summary: dict | None = None  # aggregated across models
 
 # Experiment models
 class ExperimentRequest(BaseModel):
