@@ -92,9 +92,38 @@ with tab_main:
     if not run or data is None or "results" not in data:
         st.info("No comparison results yet. Enter your prompt and settings in the sidebar, then click **Run Comparison**.")
     else:
-        cols = st.columns(len(data["results"]))
-        for c, r in zip(cols, data["results"]):
-            with c:
+        # Determine number of columns based on number of models
+        num_models = len(data["results"])
+        if num_models == 1:
+            num_cols = 1
+        elif num_models == 2:
+            num_cols = 2
+        else:
+            num_cols = 3
+        
+        # Create columns for model cards
+        cols = st.columns(num_cols)
+        
+        # Display each model's results in a card
+        for i, r in enumerate(data["results"]):
+            col_idx = i % num_cols
+            with cols[col_idx]:
+                # Card container with consistent styling
+                st.markdown(f"""
+                <div style="
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin-bottom: 20px;
+                    background-color: #ffffff;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
+                ">
+                <div style="flex-grow: 1;">
+                """, unsafe_allow_html=True)
+                
                 st.markdown(f"**{r['model']}**")
                 st.code(r["output_text"])
                 # Highlight provider errors
@@ -119,12 +148,6 @@ with tab_main:
                 if meta:
                     st.caption(" • ".join(meta))
                 
-                if r.get("logprobs") is not None:
-                    fig = go.Figure()
-                    fig.add_bar(x=list(range(len(r["logprobs"]))), y=r["logprobs"])
-                    fig.update_layout(title="Logprobs (placeholder)")
-                    st.plotly_chart(fig, use_container_width=True)
-                
                 # Display fact-check information
                 fc = r.get("factcheck")
                 if fc:
@@ -133,14 +156,84 @@ with tab_main:
                     with st.expander("Claims & evidence"):
                         for item in fc.get("claims", [])[:10]:
                             st.markdown(f"- **{item['verdict']}** — {item['claim']}" + (f"  _(source: {item['evidence']})_" if item.get('evidence') else ""))
+                
+                # Display logprobs chart if available
+                if r.get("logprobs") is not None:
+                    logprobs = r["logprobs"]
+                    tokens = r.get("tokens", [])
+                    
+                    # Create x-axis values (token indices)
+                    x_values = list(range(len(logprobs)))
+                    
+                    # Create hover text with token and value information
+                    hover_text = []
+                    for i, (logprob, token) in enumerate(zip(logprobs, tokens if tokens else [None]*len(logprobs))):
+                        token_text = token if token is not None else f"Token {i}"
+                        hover_text.append(f"Token: {token_text}<br>Index: {i}<br>LogProb: {logprob:.3f}")
+                    
+                    # Create the figure
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=x_values,
+                        y=logprobs,
+                        hovertext=hover_text,
+                        hoverinfo="text"
+                    ))
+                    
+                    # Update layout with proper labels and title
+                    fig.update_layout(
+                        title="Token log probabilities",
+                        xaxis_title="Token index in output",
+                        yaxis_title="Log probability (natural log)",
+                        height=320,
+                        margin=dict(l=50, r=20, t=40, b=50),
+                        hovermode='x unified'  # Better hover experience
+                    )
+                    
+                    # Optional: Add token annotations for all tokens
+                    annotations = []
+                    for i in range(len(tokens)):
+                        if i < len(tokens) and tokens[i] is not None:
+                            # Truncate long token strings for better display
+                            token_label = tokens[i][:10] + "..." if len(tokens[i]) > 10 else tokens[i]
+                            annotations.append(dict(
+                                x=i,
+                                y=logprobs[i],
+                                text=token_label,
+                                showarrow=True,
+                                arrowhead=2,
+                                arrowsize=1,
+                                arrowwidth=1,
+                                arrowcolor="#636363",
+                                ax=0,
+                                ay=-40,
+                                yshift=20,
+                                font=dict(size=10),
+                                bgcolor="rgba(0,0,0,0.7)",
+                                bordercolor="#636363",
+                                borderwidth=1
+                            ))
+                    
+                    if annotations:
+                        fig.update_layout(annotations=annotations)
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption("💡 Tip: You can zoom in by clicking and dragging on the chart to select a specific region. Hover over bars to see token details.")
+                
+                st.markdown("</div></div>", unsafe_allow_html=True)
 
+        st.divider()
         st.subheader("Embedding similarity")
         labels = [r["model"] for r in data["results"]]
         mat = np.array([[data["embedding_similarity"][a][b] for b in labels] for a in labels])
         heat = go.Figure(data=go.Heatmap(z=mat, x=labels, y=labels))
-        heat.update_layout(height=400)
+        heat.update_layout(
+            height=320,
+            margin=dict(l=50, r=20, t=40, b=50)
+        )
         st.plotly_chart(heat, use_container_width=True)
 
+        st.divider()
         st.markdown("<span class='pa-tip'>Autopsy summary<span class='pa-tiptext'>High-level narrative of how models differed, including risk, similarity, and key differences.</span></span>", unsafe_allow_html=True)
         # Main tab glossary
         with st.expander("What do these metrics mean? (Glossary)"):
@@ -155,7 +248,7 @@ with tab_main:
         rec = summ.get("top_model")
         if rec:
             st.markdown(
-                f"<div style='display:inline-block;padding:6px 10px;border-radius:8px;background:#eef6ff;border:1px solid #cfe3ff;font-weight:600;'>"
+                f"<div style='display:inline-block;padding:6px 10px;border-radius:8px;background:#eef6ff;border:1px solid #cfe3ff;font-weight:600;color:#000;'>"
                 f"✅ Recommended model: {rec}"
                 f"</div>",
                 unsafe_allow_html=True
@@ -202,9 +295,13 @@ with tab_main:
         risk_fig = go.Figure(go.Bar(x=[res['hallucination_risk'] for res in data['results']],
                                    y=[res['model'] for res in data['results']],
                                    orientation='h'))
-        risk_fig.update_layout(height=300, margin=dict(l=80, r=20, t=20, b=20))
+        risk_fig.update_layout(
+            height=320,
+            margin=dict(l=50, r=20, t=40, b=50)
+        )
         st.plotly_chart(risk_fig, use_container_width=True)
 
+        st.divider()
         # Token-level diff section
         if len(data["results"]) > 1 and data.get("token_diffs"):
             st.subheader("Token-level diff")
@@ -227,6 +324,7 @@ with tab_main:
             for pair, stats in data["logprob_diffs"].items():
                 st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
 
+        st.divider()
         # Semantic divergence (heuristics)
         sd = data.get("semantic_diffs", {})
         if sd:
@@ -237,16 +335,18 @@ with tab_main:
                 tags = " • ".join([f"{k}: {v:.2f}" for k,v in top])
                 st.markdown(f"**{pair}** — {tags}")
 
+st.divider()
 # Display aligned token data as tables
-        apairs = data.get("aligned_logprobs", {})
-        if apairs:
-            for pair, rows in apairs.items():
-                st.markdown(f"**Token logprob diff for {pair}**")
-                st.dataframe(
-                    [{"A_token": a, "A_lp": la, "B_token": b, "B_lp": lb, "Δlp": diff}
-                     for (a, la, b, lb, diff) in rows[:50]],  # limit to first 50 rows
-                    use_container_width=True
-                )
+if data is not None:
+    apairs = data.get("aligned_logprobs", {})
+    if apairs:
+        for pair, rows in apairs.items():
+            st.markdown(f"**Token logprob diff for {pair}**")
+            st.dataframe(
+                [{"A_token": a, "A_lp": la, "B_token": b, "B_lp": lb, "Δlp": diff}
+                 for (a, la, b, lb, diff) in rows[:50]],  # limit to first 50 rows
+                use_container_width=True
+            )
         # Autopsy Report section
         def make_markdown_report(data, original_prompt, system_prompt):
             import datetime
@@ -347,6 +447,7 @@ with tab_main:
             
             return report
         
+        st.divider()
         # Download report button
         md = make_markdown_report(data, prompt, system_prompt)
         st.download_button(
@@ -491,7 +592,7 @@ with tab_exp:
         fig_rs.add_trace(go.Scatter(x=[rr["hallucination_risk"] for rr in exp["runs"]],
                                     y=[rr["latency_ms"] for rr in exp["runs"]],
                                     mode="markers",
-                                    text=[f"{rr['model']} | T={rr['temperature']} | S={rr['system_prompt']}" for rr in exp["runs"]]))
+                                    text=[f"{rr['model']} | T={rr['temperature']} | S={rr['system_prompt'][:20]}{'...' if len(rr['system_prompt']) > 20 else ''}" for rr in exp["runs"]]))
         fig_rs.update_layout(xaxis_title="Risk", yaxis_title="Latency (ms)", height=350)
         st.plotly_chart(fig_rs, use_container_width=True)
 # Parameter influence (auto-detected)
