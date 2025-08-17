@@ -8,6 +8,50 @@ A forensic tool to compare LLM responses to the same prompt across models and ex
 - Automatic detection of temperature/system prompt influence on output similarity and hallucination risk
 - Streamlit UI for side-by-side viewing
 
+## UI Overview
+
+### Main Tab
+![Main Tab](screenshots/main_tab.png)
+The Main tab allows you to compare responses from different models to the same prompt. It displays:
+- Side-by-side model outputs with syntax highlighting
+- Hallucination risk scores and reasons
+- Token log probability charts
+- Embedding similarity heatmaps
+- Fact-check results with claim verification
+- Autopsy summary with key insights
+
+### Experiments Tab
+![Experiments Tab](screenshots/experiments_tab.png)
+The Experiments tab enables you to run systematic experiments with different parameters:
+- Grid-based experiment configuration
+- Results table with risk, latency, and logprob metrics
+- Risk by temperature charts
+- Stability line charts
+- Risk vs stability scatter plots
+- Parameter influence analysis
+
+## Supported Models
+
+### Known Working Model IDs
+- OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-4o`, `gpt-4o-mini`
+- Anthropic: `claude-3.5-sonnet-2024-10-22`, `claude-3.5-sonnet-2024-06-20`, `claude-3.5-haiku`, `claude-3-haiku`
+
+### Model Aliasing
+The tool supports model aliases for convenience and robustness to model ID changes:
+
+| Alias | Resolves to |
+|-------|------------|
+| gpt-4 | gpt-4o |
+| gpt4 | gpt-4o |
+| gpt-4-turbo | gpt-4o |
+| gpt-3.5-turbo | gpt-4o-mini |
+| gpt5 | gpt-5 |
+| gpt-5-turbo | gpt-5 |
+| claude-3.5-sonnet-2024-10-22 | claude-3-5-sonnet-20241022 |
+| claude-3.5-sonnet-2024-06-20 | claude-3-5-sonnet-20240620 |
+| claude-3.5-haiku | claude-3-5-haiku-20240307 |
+| claude-3-haiku | claude-3-haiku-20240307 |
+
 ## Experiments
 The Experiments feature allows you to run a grid of prompts across multiple models, temperatures, system prompts, and seeds.
 It computes per-model drift and stability metrics to help you understand how different parameters affect model outputs.
@@ -26,6 +70,20 @@ It computes per-model drift and stability metrics to help you understand how dif
 2) Start backend and frontend as usual
 3) Run comparisons and experiments — all charts/tables will render with synthetic data
 4) Set `MOCK_MODE=0` to go back to live APIs
+
+## Live vs Mock Mode Comparison
+
+| Feature | Live Mode | Mock Mode |
+|---------|-----------|-----------|
+| LLM API Calls | Real API calls to OpenAI/Anthropic | Synthetic responses with no network calls |
+| Response Content | Actual model outputs | Predefined sample responses |
+| Cost | Incurs API charges | $0 |
+| Speed | Network-dependent | Instant |
+| Hallucination Risk Analysis | Based on real responses | Based on synthetic data |
+| Embeddings | Computed from real responses | Computed from synthetic responses |
+| Fact-checking | Real Wikipedia lookups (if enabled) | Predefined mock data (if enabled) |
+| Token Diffs | Between real responses | Between mock responses |
+| Logprob Analysis | Real model logprobs (if supported) | Synthetic logprob data |
 
 ## Notes
 - Logprobs are placeholders and may depend on model support

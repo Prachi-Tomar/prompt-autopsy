@@ -14,11 +14,36 @@ MOCK_MODE = os.getenv("MOCK_MODE", "0")
 if MOCK_MODE == "1":
     st.info("Mock Mode is ON. Data shown below is synthetic.")
 
+# Add CSS for card layout
 st.markdown("""
 <style>
 .pa-eq { opacity: 0.85; }
 .pa-del { background: rgba(255,0,0,0.15); text-decoration: line-through; padding: 2px; border-radius: 3px; }
 .pa-ins { background: rgba(0,128,0,0.15); padding: 2px; border-radius: 3px; }
+.pa-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    background-color: #ffffff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.pa-card-content {
+    flex-grow: 1;
+}
+.pa-card-meta {
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 8px;
+}
+.pa-card-factcheck {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #eee;
+}
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
@@ -81,10 +106,120 @@ if run:
     }
     try:
         resp = requests.post(f"{get_backend_host()}/compare", json=payload, timeout=120)
+        if resp.status_code != 200:
+            snippet = resp.text[:200] + "..." if len(resp.text) > 200 else resp.text
+            st.error(f"Compare request failed with status {resp.status_code}: {snippet}")
+            st.stop()
         data = resp.json()
     except Exception as e:
         st.error(f"Request failed: {e}")
         st.stop()
+
+def render_model_card(result_dict):
+    """Render a model result in a consistent card format."""
+    # Card container with consistent styling
+    st.markdown('<div class="pa-card"><div class="pa-card-content">', unsafe_allow_html=True)
+    
+    # Model name as header
+    st.markdown(f"**{result_dict['model']}**")
+    
+    # Model output in code block
+    st.code(result_dict["output_text"], wrap_lines=True)
+    
+    # Highlight provider errors
+    if "ERROR:" in result_dict["output_text"].upper():
+        st.warning(f"Provider error for {result_dict['model']}. See output above for details.")
+    
+    # Hallucination risk
+    st.markdown(f"**Hallucination risk:** {result_dict['hallucination_risk']:.1f} / 100")
+    if result_dict.get("hallucination_reasons"):
+        st.markdown("Reasons:")
+        # Show top 3 reasons
+        for reason in result_dict["hallucination_reasons"][:3]:
+            st.markdown(f"- {reason}")
+    
+    # Display token usage and cost meta line
+    meta = []
+    if result_dict.get("prompt_tokens") is not None:
+        meta.append(f"prompt={result_dict['prompt_tokens']}")
+    if result_dict.get("completion_tokens") is not None:
+        meta.append(f"completion={result_dict['completion_tokens']}")
+    if result_dict.get("total_tokens") is not None:
+        meta.append(f"total={result_dict['total_tokens']}")
+    if result_dict.get("cost_usd") is not None:
+        meta.append(f"~${result_dict['cost_usd']:.6f}")
+    if meta:
+        st.markdown('<div class="pa-card-meta">' + " • ".join(meta) + '</div>', unsafe_allow_html=True)
+    
+    # Display fact-check information
+    fc = result_dict.get("factcheck")
+    if fc:
+        st.markdown('<div class="pa-card-factcheck">', unsafe_allow_html=True)
+        st.markdown("<span class='pa-tip'>Fact-check<span class='pa-tiptext'>Quick Wikipedia-based check of factual claims. Not authoritative; for reference only.</span></span>", unsafe_allow_html=True)
+        st.markdown(f"**Fact-check:** ✅ {fc['supported']} supported • ⚠️ {fc['ambiguous']} ambiguous • ❌ {fc['unsupported']} unsupported")
+        with st.expander("Claims & evidence"):
+            for item in fc.get("claims", [])[:10]:
+                st.markdown(f"- **{item['verdict']}** — {item['claim']}" + (f"  _(source: {item['evidence']})_" if item.get('evidence') else ""))
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Display logprobs chart if available
+    if result_dict.get("logprobs") is not None:
+        # Ensure tokens is properly handled even if None or missing
+        tokens = result_dict.get("tokens")
+        if tokens is None:
+            # Create a list of None values with same length as logprobs for proper hover text
+            tokens = [None] * len(result_dict["logprobs"])
+        st.markdown("**Token log probabilities chart:**")
+        render_logprob_chart(result_dict['model'], tokens, result_dict["logprobs"])
+    elif result_dict.get("logprobs") is None and result_dict.get("tokens") is not None:
+        # If we have tokens but no logprobs, show a caption
+        st.caption(f"{result_dict['model']}: logprobs unavailable for this model/provider")
+    
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+def render_logprob_chart(model_label, tokens, logprobs):
+    """Render a Plotly bar chart for token log probabilities."""
+    # If logprobs is missing/empty, show a caption
+    if not logprobs or all(logprob == 0 for logprob in logprobs):
+        st.caption(f"{model_label}: logprobs unavailable")
+        return
+    
+    # Create x-axis values (token indices)
+    x_values = list(range(len(logprobs)))
+    
+    # Create hover text with token and value information
+    hover_text = []
+    for i, (logprob, token) in enumerate(zip(logprobs, tokens if tokens else [None]*len(logprobs))):
+        token_text = token if token is not None else f"Token {i}"
+        # Escape HTML characters in token text for hover
+        token_text_escaped = token_text.replace("&", "&").replace("<", "<").replace(">", ">").replace('"', '"')
+        hover_text.append(f"Index: {i}<br>Token: {token_text_escaped}<br>LogProb: {logprob:.3f}")
+    
+    # Create the figure
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x_values,
+        y=logprobs,
+        text=[f"{logprob:.2f}" for logprob in logprobs],  # Add text annotations to bars
+        textposition="auto",  # Position text automatically
+        hovertext=hover_text,
+        hoverinfo="text+x+y+name"  # Include custom text, axis info, and trace name
+    ))
+    
+    # Update layout with proper labels and title
+    fig.update_layout(
+        title=f"Token log probabilities for {model_label}",
+        xaxis_title="Token index in output",
+        yaxis_title="Log probability (natural log)",
+        height=320,
+        margin=dict(l=50, r=20, t=40, b=50),
+        hovermode='x unified'  # Better hover experience
+    )
+    
+    # Add a note about chart interaction
+    st.caption("Hover over bars to see token details. Click and drag to zoom. Double-click to reset zoom.")
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 # Main tab content
 with tab_main:
@@ -108,130 +243,86 @@ with tab_main:
         for i, r in enumerate(data["results"]):
             col_idx = i % num_cols
             with cols[col_idx]:
-                # Card container with consistent styling
-                st.markdown(f"""
-                <div style="
-                    border: 1px solid #e0e0e0;
-                    border-radius: 8px;
-                    padding: 16px;
-                    margin-bottom: 20px;
-                    background-color: #ffffff;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                    height: 100%;
-                    display: flex;
-                    flex-direction: column;
-                ">
-                <div style="flex-grow: 1;">
-                """, unsafe_allow_html=True)
+                render_model_card(r)
+        
+        # Add combined overlay chart if 2 or more models have logprobs
+        models_with_logprobs = [r for r in data["results"] if r.get("logprobs") and len(r["logprobs"]) > 0]
+        if len(models_with_logprobs) >= 2:
+            st.divider()
+            st.subheader("Combined log probability comparison")
+            st.caption("Note: Token indices may not align perfectly between models due to different tokenizations.")
+            
+            # Create combined figure
+            fig_combined = go.Figure()
+            
+            # Add a trace for each model
+            for result in models_with_logprobs:
+                model_label = result["model"]
+                logprobs = result["logprobs"]
+                tokens = result.get("tokens", [None]*len(logprobs))
                 
-                st.markdown(f"**{r['model']}**")
-                st.code(r["output_text"])
-                # Highlight provider errors
-                if "ERROR:" in r["output_text"].upper():
-                    st.warning(f"Provider error for {r['model']}. See output above for details.")
-                st.markdown(f"**Hallucination risk:** {r['hallucination_risk']:.1f} / 100")
-                if r.get("hallucination_reasons"):
-                    st.markdown("Reasons:")
-                    for reason in r["hallucination_reasons"]:
-                        st.markdown(f"- {reason}")
+                # Create x-axis values (token indices)
+                x_values = list(range(len(logprobs)))
                 
-                # Display token usage and cost meta line
-                meta = []
-                if r.get("prompt_tokens") is not None:
-                    meta.append(f"prompt={r['prompt_tokens']}")
-                if r.get("completion_tokens") is not None:
-                    meta.append(f"completion={r['completion_tokens']}")
-                if r.get("total_tokens") is not None:
-                    meta.append(f"total={r['total_tokens']}")
-                if r.get("cost_usd") is not None:
-                    meta.append(f"~${r['cost_usd']:.6f}")
-                if meta:
-                    st.caption(" • ".join(meta))
+                # Create hover text
+                hover_text = []
+                for i, (logprob, token) in enumerate(zip(logprobs, tokens)):
+                    token_text = token if token is not None else f"Token {i}"
+                    token_text_escaped = token_text.replace("&", "&").replace("<", "<").replace(">", ">").replace('"', '"')
+                    hover_text.append(f"Model: {model_label}<br>Index: {i}<br>Token: {token_text_escaped}<br>LogProb: {logprob:.3f}")
                 
-                # Display fact-check information
-                fc = r.get("factcheck")
-                if fc:
-                    st.markdown("<span class='pa-tip'>Fact-check<span class='pa-tiptext'>Quick Wikipedia-based check of factual claims. Not authoritative; for reference only.</span></span>", unsafe_allow_html=True)
-                    st.markdown(f"**Fact-check:** ✅ {fc['supported']} supported • ⚠️ {fc['ambiguous']} ambiguous • ❌ {fc['unsupported']} unsupported")
-                    with st.expander("Claims & evidence"):
-                        for item in fc.get("claims", [])[:10]:
-                            st.markdown(f"- **{item['verdict']}** — {item['claim']}" + (f"  _(source: {item['evidence']})_" if item.get('evidence') else ""))
-                
-                # Display logprobs chart if available
-                if r.get("logprobs") is not None:
-                    logprobs = r["logprobs"]
-                    tokens = r.get("tokens", [])
-                    
-                    # Create x-axis values (token indices)
-                    x_values = list(range(len(logprobs)))
-                    
-                    # Create hover text with token and value information
-                    hover_text = []
-                    for i, (logprob, token) in enumerate(zip(logprobs, tokens if tokens else [None]*len(logprobs))):
-                        token_text = token if token is not None else f"Token {i}"
-                        hover_text.append(f"Token: {token_text}<br>Index: {i}<br>LogProb: {logprob:.3f}")
-                    
-                    # Create the figure
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=x_values,
-                        y=logprobs,
-                        hovertext=hover_text,
-                        hoverinfo="text"
-                    ))
-                    
-                    # Update layout with proper labels and title
-                    fig.update_layout(
-                        title="Token log probabilities",
-                        xaxis_title="Token index in output",
-                        yaxis_title="Log probability (natural log)",
-                        height=320,
-                        margin=dict(l=50, r=20, t=40, b=50),
-                        hovermode='x unified'  # Better hover experience
-                    )
-                    
-                    # Optional: Add token annotations for all tokens
-                    annotations = []
-                    for i in range(len(tokens)):
-                        if i < len(tokens) and tokens[i] is not None:
-                            # Truncate long token strings for better display
-                            token_label = tokens[i][:10] + "..." if len(tokens[i]) > 10 else tokens[i]
-                            annotations.append(dict(
-                                x=i,
-                                y=logprobs[i],
-                                text=token_label,
-                                showarrow=True,
-                                arrowhead=2,
-                                arrowsize=1,
-                                arrowwidth=1,
-                                arrowcolor="#636363",
-                                ax=0,
-                                ay=-40,
-                                yshift=20,
-                                font=dict(size=10),
-                                bgcolor="rgba(0,0,0,0.7)",
-                                bordercolor="#636363",
-                                borderwidth=1
-                            ))
-                    
-                    if annotations:
-                        fig.update_layout(annotations=annotations)
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.caption("💡 Tip: You can zoom in by clicking and dragging on the chart to select a specific region. Hover over bars to see token details.")
-                
-                st.markdown("</div></div>", unsafe_allow_html=True)
+                # Add trace for this model
+                fig_combined.add_trace(go.Scatter(
+                    x=x_values,
+                    y=logprobs,
+                    mode='lines+markers+text',  # Add text mode
+                    name=model_label,
+                    text=[f"{logprob:.2f}" for logprob in logprobs],  # Add text annotations
+                    textposition="top center",  # Position text at top center
+                    hovertext=hover_text,
+                    hoverinfo="text+x+y+name"  # Include custom text, axis info, and trace name
+                ))
+            
+            # Update layout
+            fig_combined.update_layout(
+                title="Token log probabilities comparison",
+                xaxis_title="Token index in output",
+                yaxis_title="Log probability (natural log)",
+                height=320,
+                margin=dict(l=50, r=20, t=40, b=50),
+                hovermode='x unified'
+            )
+            
+            # Add a note about chart interaction
+            st.caption("Hover over lines to see token details. Click and drag to zoom. Double-click to reset zoom.")
+            
+            st.plotly_chart(fig_combined, use_container_width=True)
+        elif len(models_with_logprobs) == 1:
+            # Explain why combined chart isn't shown
+            st.divider()
+            st.subheader("Combined log probability comparison")
+            st.info("Combined chart not shown because only one model returned log probabilities. "
+                    "Some models (like Anthropic's Claude) don't currently support token-level log probabilities.")
+        elif len(models_with_logprobs) == 0:
+            # Explain why combined chart isn't shown
+            st.divider()
+            st.subheader("Combined log probability comparison")
+            st.info("Combined chart not shown because none of the selected models returned log probabilities. "
+                    "Some models (like Anthropic's Claude) don't currently support token-level log probabilities.")
 
         st.divider()
         st.subheader("Embedding similarity")
-        labels = [r["model"] for r in data["results"]]
-        mat = np.array([[data["embedding_similarity"][a][b] for b in labels] for a in labels])
-        heat = go.Figure(data=go.Heatmap(z=mat, x=labels, y=labels))
-        heat.update_layout(
-            height=320,
-            margin=dict(l=50, r=20, t=40, b=50)
-        )
-        st.plotly_chart(heat, use_container_width=True)
+        if data.get("embedding_similarity") and data["results"]:
+            labels = [r["model"] for r in data["results"]]
+            mat = np.array([[data["embedding_similarity"][a][b] for b in labels] for a in labels])
+            heat = go.Figure(data=go.Heatmap(z=mat, x=labels, y=labels))
+            heat.update_layout(
+                height=320,
+                margin=dict(l=50, r=20, t=40, b=50)
+            )
+            st.plotly_chart(heat, use_container_width=True)
+        else:
+            st.caption("Embedding similarity data is not available.")
 
         st.divider()
         st.markdown("<span class='pa-tip'>Autopsy summary<span class='pa-tiptext'>High-level narrative of how models differed, including risk, similarity, and key differences.</span></span>", unsafe_allow_html=True)
@@ -292,19 +383,24 @@ with tab_main:
             st.info("No summary available yet.")
 
         st.subheader("Hallucination risk by model")
-        risk_fig = go.Figure(go.Bar(x=[res['hallucination_risk'] for res in data['results']],
-                                   y=[res['model'] for res in data['results']],
-                                   orientation='h'))
-        risk_fig.update_layout(
-            height=320,
-            margin=dict(l=50, r=20, t=40, b=50)
-        )
-        st.plotly_chart(risk_fig, use_container_width=True)
+        st.caption("Estimated hallucination risk score for each model. Higher scores indicate a greater likelihood of unsupported claims.")
+        if data.get("results"):
+            risk_fig = go.Figure(go.Bar(x=[res['hallucination_risk'] for res in data['results']],
+                                       y=[res['model'] for res in data['results']],
+                                       orientation='h'))
+            risk_fig.update_layout(
+                height=320,
+                margin=dict(l=50, r=20, t=40, b=50)
+            )
+            st.plotly_chart(risk_fig, use_container_width=True)
+        else:
+            st.caption("Hallucination risk data is not available.")
 
         st.divider()
         # Token-level diff section
         if len(data["results"]) > 1 and data.get("token_diffs"):
             st.subheader("Token-level diff")
+            st.caption("Visual comparison of token-level differences between model outputs. Red strikethrough shows deletions, green highlights show insertions.")
             pair_keys = sorted(data["token_diffs"].keys())
             if pair_keys:
                 selected_pair = st.selectbox("Select model pair to compare:", pair_keys)
@@ -320,7 +416,8 @@ with tab_main:
             st.info("Token diffs are only available when comparing multiple models. Select at least two models to see diffs.")
 
         if data.get("logprob_diffs"):
-            st.markdown("<span class='pa-tip'>Logprob differences between models<span class='pa-tiptext'>How confident each model was in generating each token. Large differences may indicate uncertainty or stylistic variation.</span></span>", unsafe_allow_html=True)
+            st.subheader("Logprob differences between models")
+            st.caption("How confident each model was in generating each token. Large differences may indicate uncertainty or stylistic variation.")
             for pair, stats in data["logprob_diffs"].items():
                 st.markdown(f"**{pair}** — mean |Δlogprob|: {stats['mean_abs_diff']:.3f}, max: {stats['max_abs_diff']:.3f}, tokens compared: {int(stats['n_compared'])}")
 
@@ -347,6 +444,8 @@ if data is not None:
                  for (a, la, b, lb, diff) in rows[:50]],  # limit to first 50 rows
                 use_container_width=True
             )
+    else:
+        st.caption("Aligned logprob data is not available.")
         # Autopsy Report section
         def make_markdown_report(data, original_prompt, system_prompt):
             import datetime
