@@ -14,6 +14,19 @@ MOCK_MODE = os.getenv("MOCK_MODE", "0")
 if MOCK_MODE == "1":
     st.info("Mock Mode is ON. Data shown below is synthetic.")
 
+# Call /health once on load and cache the result
+@st.cache_data(ttl=60)  # Cache for 60 seconds
+def get_health_status():
+    try:
+        resp = requests.get(f"{get_backend_host()}/health", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+health_data = get_health_status()
+
 # Add CSS for card layout
 st.markdown("""
 <style>
@@ -77,11 +90,23 @@ with st.sidebar:
             "claude-3.5-sonnet-2024-10-22",
             "claude-3.5-sonnet-2024-06-20",
             "claude-3.5-haiku",
-            "claude-3-haiku"
+            "claude-3-haiku",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash"
         ],
         default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
         help="Choose one or more LLMs to compare. The same prompt will be sent to each."
     )
+    
+    # Check if any selected model is a gemini model and vertex is not ready
+    if health_data and not health_data.get("vertex_ready", False):
+        gemini_models_selected = any(model.startswith("gemini") for model in models)
+        if gemini_models_selected:
+            st.warning("Gemini requires Vertex AI config; see README and .env")
+    
+    st.caption("Gemini logprobs require Vertex AI SDK; OpenAI-compatible API does not support them.")
     temperature = st.slider(
         "Temperature",
         0.0, 1.0, 0.2, 0.1,
@@ -223,6 +248,14 @@ def render_logprob_chart(model_label, tokens, logprobs):
 
 # Main tab content
 with tab_main:
+    # Show Vertex AI status badge
+    if health_data:
+        if health_data.get("vertex_ready", False):
+            location = health_data.get("location", "unknown")
+            st.caption(f"Live • Vertex AI • {location}")
+        else:
+            st.caption("Vertex AI not configured")
+    
     # Check if we have comparison data
     if not run or data is None or "results" not in data:
         st.info("No comparison results yet. Enter your prompt and settings in the sidebar, then click **Run Comparison**.")
@@ -587,11 +620,12 @@ with tab_exp:
     )
     e_models = st.multiselect(
         "Models",
-        ["gpt-5","gpt-5-mini","gpt-4o","gpt-4o-mini","claude-3.5-sonnet-2024-10-22","claude-3.5-sonnet-2024-06-20","claude-3.5-haiku","claude-3-haiku"],
+        ["gpt-5","gpt-5-mini","gpt-4o","gpt-4o-mini","claude-3.5-sonnet-2024-10-22","claude-3.5-sonnet-2024-06-20","claude-3.5-haiku","claude-3-haiku","gemini-1.5-pro","gemini-1.5-flash","gemini-2.5-pro","gemini-2.5-flash"],
         default=["gpt-4o", "claude-3.5-sonnet-2024-10-22"],
         key="exp_models",
         help="Pick the models to test. Each model is run with every temperature/system prompt/seed you specify."
     )
+    st.caption("Gemini logprobs require Vertex AI SDK; OpenAI-compatible API does not support them.")
     temps_str = st.text_input(
         "Temperatures (comma separated)",
         "0.2,0.7",

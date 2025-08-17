@@ -15,9 +15,22 @@ ANTHROPIC_PRICING = {
     "claude-3-haiku":               (0.80, 4.00),
     # add others you use
 }
+GOOGLE_PRICING = {
+    "gemini-1.5-pro":  (1.25, 3.75),
+    "gemini-1.5-flash": (0.075, 0.30),
+    # add others you use
+}
 
 def estimate_cost(model: str, provider: str, prompt_toks: int, completion_toks: int) -> float:
-    table = OPENAI_PRICING if provider == "openai" else ANTHROPIC_PRICING
+    if provider == "openai":
+        table = OPENAI_PRICING
+    elif provider == "anthropic":
+        table = ANTHROPIC_PRICING
+    elif provider == "google":
+        table = GOOGLE_PRICING
+    else:
+        table = {}
+    
     # pick exact if present, else try prefix match
     if model in table:
         pin, pout = table[model]

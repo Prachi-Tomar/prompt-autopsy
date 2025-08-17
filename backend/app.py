@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from backend.models.schemas import CompareRequest, CompareResponse, ModelResult, ExperimentRequest, ExperimentRun, DriftStats, ExperimentResponse
 from backend.adapters.openai_adapter import OpenAIAdapter
 from backend.adapters.anthropic_adapter import AnthropicAdapter
+from backend.adapters.google_adapter import GoogleAdapter
+from backend.adapters.gemini_vertex_adapter import GeminiVertexAdapter
 from backend.analysis.embeddings import embed_texts, pairwise_similarity
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -10,7 +12,9 @@ import asyncio
 import random
 from backend.analysis.hallucination import compute_hallucination_risk
 from backend.analysis.diff import html_token_diff, unified_token_diff
-from backend.utils.settings import MOCK_MODE
+from backend.utils.settings import MOCK_MODE, GOOGLE_CLOUD_PROJECT, VERTEX_LOCATION, vertex_config_ok
+import logging
+logger = logging.getLogger("backend")
 from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
 from backend.analysis.parameter_influence import compute_parameter_influence
 from backend.analysis.semantic_diff import classify_semantic_divergence
@@ -18,10 +22,23 @@ from backend.analysis.factcheck import analyze_factcheck
 from backend.analysis.claims import extract_candidate_claims
 from backend.analysis.factcheck import verify_claims
 import os
+import logging
 
 FACTCHECK_ON = os.getenv("FACTCHECK", "0") == "1"
 
+# Set up logging
+logger = logging.getLogger("backend")
+logger.setLevel(logging.INFO)
+
+# Log key settings on startup
+logger.info(f"Startup configuration: MOCK_MODE={MOCK_MODE}, GOOGLE_CLOUD_PROJECT={GOOGLE_CLOUD_PROJECT or None}, VERTEX_LOCATION={VERTEX_LOCATION or None}")
+
 app = FastAPI(title="Prompt Autopsy API")
+
+
+@app.get("/")
+def root():
+    return {"ok": True, "service": "prompt-autopsy", "docs": "/docs", "health": "/health"}
 
 # Mock response functions
 def mock_compare_response(req: CompareRequest) -> CompareResponse:
@@ -224,7 +241,15 @@ MODEL_ALIASES = {
     "claude-3.5-sonnet-2024-10-22": "claude-3-5-sonnet-20241022",
     "claude-3.5-sonnet-2024-06-20": "claude-3-5-sonnet-20240620",
     "claude-3.5-haiku": "claude-3-5-haiku-20240307",
-    "claude-3-haiku": "claude-3-haiku-20240307"
+    "claude-3-haiku": "claude-3-haiku-20240307",
+
+    # Google aliases
+    "gemini-pro": "gemini-1.5-pro",
+    "gemini-flash": "gemini-1.5-flash",
+    
+    # New Gemini models
+    "gemini-2.5-pro": "gemini-2.5-pro",
+    "gemini-2.5-flash": "gemini-2.5-flash"
 }
 
 def get_adapter(model_name: str):
@@ -241,6 +266,10 @@ def get_adapter(model_name: str):
         return OpenAIAdapter(name)
     if lname.startswith("claude"):
         return AnthropicAdapter(name)
+    if lname.startswith("gemini"):
+        # For now, route all gemini models to the new Vertex adapter
+        # Later we can differentiate between Google API and Vertex AI
+        return GeminiVertexAdapter(name)
     return OpenAIAdapter(name)  # fallback
 
 @app.post("/compare", response_model=CompareResponse)
@@ -491,6 +520,10 @@ def adapter_for(model):
         return OpenAIAdapter(name)
     if lname.startswith("claude"):
         return AnthropicAdapter(name)
+    if lname.startswith("gemini"):
+        # For now, route all gemini models to the new Vertex adapter
+        # Later we can differentiate between Google API and Vertex AI
+        return GeminiVertexAdapter(name)
     return OpenAIAdapter(name)  # fallback
 
 @app.post("/experiment", response_model=ExperimentResponse)
@@ -629,3 +662,17 @@ async def experiment(req: ExperimentRequest):
     # attach
     drift.parameter_influence = {"temperature": temp_inf, "system_prompt": sys_inf}
     return ExperimentResponse(runs=runs, drift=drift)
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint that returns key settings"""
+    logger.info("Health endpoint called")
+    result = {
+        "ok": True,
+        "mock_mode": MOCK_MODE,
+        "project": GOOGLE_CLOUD_PROJECT or None,
+        "location": VERTEX_LOCATION or None
+    }
+    logger.info(f"Health endpoint result: {result}")
+    return result

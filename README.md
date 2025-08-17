@@ -35,6 +35,7 @@ The Experiments tab enables you to run systematic experiments with different par
 ### Known Working Model IDs
 - OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-4o`, `gpt-4o-mini`
 - Anthropic: `claude-3.5-sonnet-2024-10-22`, `claude-3.5-sonnet-2024-06-20`, `claude-3.5-haiku`, `claude-3-haiku`
+- Google: `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`
 
 ### Model Aliasing
 The tool supports model aliases for convenience and robustness to model ID changes:
@@ -51,6 +52,21 @@ The tool supports model aliases for convenience and robustness to model ID chang
 | claude-3.5-sonnet-2024-06-20 | claude-3-5-sonnet-20240620 |
 | claude-3.5-haiku | claude-3-5-haiku-20240307 |
 | claude-3-haiku | claude-3-haiku-20240307 |
+| gemini-pro | gemini-1.5-pro |
+| gemini-flash | gemini-1.5-flash |
+
+### Google Gemini Support
+Google Gemini models are supported through two different adapters:
+- **Google API Adapter**: Uses the standard Google Generative AI API (OpenAI-compatible)
+- **Vertex AI Adapter**: Uses Google Cloud Vertex AI SDK for enhanced features
+
+The Vertex AI SDK is required for advanced features like per-token logprobs. The OpenAI-compatible API does not support per-token logprobs.
+Per-token logprobs are available only via Vertex AI with `response_logprobs=True` parameter.
+
+To use the Vertex AI adapter, you need to set the following environment variables:
+- `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID
+- `VERTEX_LOCATION`: The location of your Vertex AI resources (e.g., us-central1)
+- `GOOGLE_APPLICATION_CREDENTIALS`: Path to your service account JSON file
 
 ## Experiments
 The Experiments feature allows you to run a grid of prompts across multiple models, temperatures, system prompts, and seeds.
@@ -86,7 +102,7 @@ It computes per-model drift and stability metrics to help you understand how dif
 | Logprob Analysis | Real model logprobs (if supported) | Synthetic logprob data |
 
 ## Notes
-- Logprobs are placeholders and may depend on model support
+- Logprobs are placeholders and may depend on model support. Google's Gemini models do not currently expose token-level log probabilities through the OpenAI-compatible API. Per-token logprobs are available only via Vertex AI with response_logprobs=True.
 - Embeddings computed with sentence-transformers
 - Use at your own risk. MIT licensed.
 - Fact-checking uses Wikipedia and simple heuristics; it's not authoritative.
