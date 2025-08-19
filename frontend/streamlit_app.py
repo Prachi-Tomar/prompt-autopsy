@@ -25,6 +25,24 @@ def get_health_status():
         pass
     return None
 
+# Cached helper for aligning token/logprob pairs
+@st.cache_data(show_spinner=False)
+def align_pair(a_text, b_text, a_tok, b_tok, a_lp, b_lp):
+    """Align token/logprob pairs and return rows + stats"""
+    import sys
+    import os
+    # Add the parent directory to the path to import backend modules
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    
+    from backend.analysis.logprob_diff import align_tokens_and_logprobs, summarize_logprob_diff
+    
+    # Call existing align/diff logic
+    aligned = align_tokens_and_logprobs(a_tok, a_lp, b_tok, b_lp)
+    stats = summarize_logprob_diff(aligned)
+    
+    return aligned, stats
 health_data = get_health_status()
 
 # Add CSS for card layout
@@ -138,6 +156,58 @@ if run:
         data = resp.json()
     except Exception as e:
         st.error(f"Request failed: {e}")
+        st.stop()
+# Build pair data once (i<j) from data["results"]
+    if data and "results" in data:
+        results = data["results"]
+        if len(results) < 2:
+            st.info("Need at least 2 results to build pair data.")
+            st.stop()
+        
+        pair_items = []
+        pair_labels = []
+        pair_aligned = {}
+        
+        # Build pairs with i < j
+        for i in range(len(results)):
+            for j in range(i + 1, len(results)):
+                A = results[i]
+                B = results[j]
+                label = f"{A['model']} ⟷ {B['model']}"
+                
+                # Create pair item with A, B and their data
+                pair_item = {
+                    "A": A,
+                    "B": B,
+                    "label": label
+                }
+                
+                pair_items.append(pair_item)
+                pair_labels.append(label)
+                
+                # Build aligned data for this pair
+                key = f"{A['model']}||{B['model']}"
+                a_text = A.get("output_text", "")
+                b_text = B.get("output_text", "")
+                a_tok = A.get("tokens", [])
+                b_tok = B.get("tokens", [])
+                a_lp = A.get("logprobs", [])
+                b_lp = B.get("logprobs", [])
+                
+                # Call cached align function
+                aligned, stats = align_pair(a_text, b_text, a_tok, b_tok, a_lp, b_lp)
+                pair_aligned[key] = {
+                    "rows": aligned,
+                    "stats": stats
+                }
+        
+        # Save to session state
+        st.session_state["pair_items"] = pair_items
+        st.session_state["pair_labels"] = pair_labels
+        st.session_state["pair_aligned"] = pair_aligned
+        
+    else:
+        st.info("No comparison data available.")
         st.stop()
 
 def render_model_card(result_dict):
@@ -430,23 +500,144 @@ with tab_main:
             st.caption("Hallucination risk data is not available.")
 
         st.divider()
-        # Token-level diff section
-        if len(data["results"]) > 1 and data.get("token_diffs"):
-            st.subheader("Token-level diff")
-            st.caption("Visual comparison of token-level differences between model outputs. Red strikethrough shows deletions, green highlights show insertions.")
-            pair_keys = sorted(data["token_diffs"].keys())
-            if pair_keys:
-                selected_pair = st.selectbox("Select model pair to compare:", pair_keys)
-                if selected_pair in data["token_diffs"]:
-                    st.markdown(data["token_diffs"][selected_pair]["html"], unsafe_allow_html=True)
-                    with st.expander("Unified diff (text)"):
-                        st.code(data["token_diffs"][selected_pair]["unified"], language="diff")
-            else:
-                st.info("No token diffs available for the selected models.")
-        elif len(data["results"]) > 1:
-            st.info("Token diffs are not available for the selected models.")
-        elif len(data["results"]) == 1:
-            st.info("Token diffs are only available when comparing multiple models. Select at least two models to see diffs.")
+        # Token-level diff section with expanders for each pair
+        if len(data["results"]) > 1:
+            st.subheader("Pairwise comparisons")
+            st.caption("Detailed comparison between each pair of models.")
+            
+            # Get embedding similarity data if available
+            embedding_sim = data.get("embedding_similarity", {})
+            
+            # Display each pair in an expander
+            if "pair_items" in st.session_state:
+                for pair_item in st.session_state["pair_items"]:
+                    A = pair_item["A"]
+                    B = pair_item["B"]
+                    label = pair_item["label"]
+                    key = f"{A['model']}||{B['model']}"
+                    
+                    # Initialize expanded_pairs in session state if not present
+                    if "expanded_pairs" not in st.session_state:
+                        st.session_state["expanded_pairs"] = []
+                    
+                    # Check if this pair should be expanded by default
+                    expanded = key in st.session_state.get("expanded_pairs", [])
+                    
+                    # Create expander with a unique key
+                    expander = st.expander(label, expanded=expanded)
+                    
+                    with expander:
+                        # Add a checkbox to track expanded state
+                        is_expanded = st.checkbox("Keep expanded", value=expanded, key=f"expand_{key}")
+                        
+                        # Update session state based on checkbox
+                        if is_expanded and key not in st.session_state["expanded_pairs"]:
+                            st.session_state["expanded_pairs"].append(key)
+                        elif not is_expanded and key in st.session_state["expanded_pairs"]:
+                            st.session_state["expanded_pairs"].remove(key)
+                        
+                        # Compact header row with metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        # Cosine similarity
+                        cosine_sim = None
+                        if A['model'] in embedding_sim and B['model'] in embedding_sim[A['model']]:
+                            cosine_sim = embedding_sim[A['model']][B['model']]
+                        elif B['model'] in embedding_sim and A['model'] in embedding_sim[B['model']]:
+                            cosine_sim = embedding_sim[B['model']][A['model']]
+                        
+                        if cosine_sim is not None:
+                            col1.metric("Similarity", f"{cosine_sim:.3f}")
+                        else:
+                            col1.metric("Similarity", "N/A")
+                        
+                        # Risk scores
+                        col2.metric(f"{A['model']} risk", f"{A['hallucination_risk']:.1f}")
+                        col3.metric(f"{B['model']} risk", f"{B['hallucination_risk']:.1f}")
+                        
+                        # Latency/Cost if available
+                        latency_cost_text = ""
+                        if A.get("latency_ms") and B.get("latency_ms"):
+                            latency_cost_text += f"⏱️ {A['latency_ms']:.0f}/{B['latency_ms']:.0f}ms"
+                        if A.get("cost_usd") and B.get("cost_usd"):
+                            if latency_cost_text:
+                                latency_cost_text += " • "
+                            latency_cost_text += f"💰 ${A['cost_usd']:.4f}/${B['cost_usd']:.4f}"
+                        if latency_cost_text:
+                            col4.markdown(latency_cost_text)
+                        else:
+                            col4.markdown("⏱️/💰 N/A")
+                        
+                        st.divider()
+                        
+                        # Token-level diff panel
+                        if data.get("token_diffs") and key in data["token_diffs"]:
+                            st.markdown("**Token-level diff:**")
+                            st.markdown(data["token_diffs"][key]["html"], unsafe_allow_html=True)
+                            
+                            with st.expander("Unified diff (text)"):
+                                st.code(data["token_diffs"][key]["unified"], language="diff")
+                        else:
+                            st.info("Token diffs are not available for this pair.")
+                        
+                        st.divider()
+                        
+                        # Logprob data
+                        a_has_logprobs = A.get("logprobs") and len(A["logprobs"]) > 0
+                        b_has_logprobs = B.get("logprobs") and len(B.get("logprobs", [])) > 0
+                        
+                        if a_has_logprobs and b_has_logprobs:
+                            st.markdown("**Token log probabilities comparison:**")
+                            
+                            # Get aligned logprob data if available
+                            if "pair_aligned" in st.session_state and key in st.session_state["pair_aligned"]:
+                                aligned_data = st.session_state["pair_aligned"][key]
+                                rows = aligned_data.get("rows", [])
+                                stats = aligned_data.get("stats", {})
+                                
+                                if stats:
+                                    st.caption(f"Mean |Δlogprob|: {stats.get('mean_abs_diff', 0):.3f}, "
+                                              f"Max: {stats.get('max_abs_diff', 0):.3f}, "
+                                              f"Tokens compared: {int(stats.get('n_compared', 0))}")
+                                
+                                # Show logprob table (limit to first 50 rows)
+                                if rows:
+                                    st.dataframe(
+                                        [{"A_token": a, "A_lp": la, "B_token": b, "B_lp": lb, "Δlp": diff}
+                                         for (a, la, b, lb, diff) in rows[:50]],
+                                        use_container_width=True
+                                    )
+                                
+                                # Optional plotly chart
+                                if st.checkbox("Show log probability chart", key=f"chart_{key}"):
+                                    # Create chart data
+                                    indices = list(range(len(rows)))
+                                    a_logprobs = [row[1] if row[1] is not None else 0 for row in rows]
+                                    b_logprobs = [row[3] if row[3] is not None else 0 for row in rows]
+                                    
+                                    # Create figure
+                                    fig = go.Figure()
+                                    fig.add_trace(go.Scatter(
+                                        x=indices, y=a_logprobs,
+                                        mode='lines+markers',
+                                        name=A['model']
+                                    ))
+                                    fig.add_trace(go.Scatter(
+                                        x=indices, y=b_logprobs,
+                                        mode='lines+markers',
+                                        name=B['model']
+                                    ))
+                                    fig.update_layout(
+                                        title="Token log probabilities comparison",
+                                        xaxis_title="Token index",
+                                        yaxis_title="Log probability",
+                                        height=300
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.caption("Aligned logprob data is not available.")
+                        else:
+                            st.caption("Logprobs unavailable for this pair.")
 
         if data.get("logprob_diffs"):
             st.subheader("Logprob differences between models")
