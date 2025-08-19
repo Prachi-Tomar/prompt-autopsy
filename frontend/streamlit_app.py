@@ -517,25 +517,11 @@ with tab_main:
                     label = pair_item["label"]
                     key = f"{A['model']}||{B['model']}"
                     
-                    # Initialize expanded_pairs in session state if not present
-                    if "expanded_pairs" not in st.session_state:
-                        st.session_state["expanded_pairs"] = []
-                    
-                    # Check if this pair should be expanded by default
-                    expanded = key in st.session_state.get("expanded_pairs", [])
                     
                     # Create expander with a unique key
-                    expander = st.expander(label, expanded=expanded)
+                    expander = st.expander(label, expanded=False)
                     
                     with expander:
-                        # Add a checkbox to track expanded state
-                        is_expanded = st.checkbox("Keep expanded", value=expanded, key=f"expand_{key}")
-                        
-                        # Update session state based on checkbox
-                        if is_expanded and key not in st.session_state["expanded_pairs"]:
-                            st.session_state["expanded_pairs"].append(key)
-                        elif not is_expanded and key in st.session_state["expanded_pairs"]:
-                            st.session_state["expanded_pairs"].remove(key)
                         
                         # Compact header row with metrics
                         col1, col2, col3, col4 = st.columns(4)
@@ -866,11 +852,6 @@ with tab_exp:
         help="If supported, using the same seed makes runs repeatable at the same temperature. Leave blank to ignore."
     )
 
-    st.button(
-        "Run Experiments",
-        help="Runs the full grid: models × temperatures × system prompts × seeds."
-    )
-    
     if "gpt-5" in e_models:
         st.caption("Note: Some GPT-5 variants force default temperature. If set, we'll ignore custom temperature for that model.")
         
@@ -894,6 +875,19 @@ with tab_exp:
         except Exception as e:
             st.error(f"Experiment request failed: {e}")
             st.stop()
+        
+        # Define experiment signature
+        sig = {
+            "prompt": e_prompt,
+            "models": tuple(sorted(e_models)),
+            "temperatures": tuple(temps),
+            "system_prompts": tuple(sys_list),
+            "seeds": tuple(seeds),
+        }
+        
+        # Store in session state
+        st.session_state["exp_sig"] = sig
+        st.session_state["exp_data"] = exp
 
         # Table
         rows = []
@@ -960,6 +954,56 @@ with tab_exp:
                     for v, metrics in vals.items():
                         st.markdown(f"  - {param} = `{v}` → similarity to baseline: {metrics['similarity_to_baseline']:.3f}, risk change: {metrics['risk_change']:+.2f}")
 
-        # CSV download
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download runs as CSV", data=csv, file_name="prompt_autopsy_experiments.csv", mime="text/csv")
+        # Check if we have cached CSV data
+        # Build a new signature from current inputs
+        current_sig = {
+            "prompt": e_prompt,
+            "models": tuple(sorted(e_models)),
+            "temperatures": tuple(temps),
+            "system_prompts": tuple(sys_list),
+            "seeds": tuple(seeds),
+        }
+        
+        # Check if we have cached data and it matches current inputs
+        if ("exp_data" in st.session_state and "exp_sig" in st.session_state and
+            st.session_state["exp_sig"] == current_sig):
+            # Use cached data
+            exp = st.session_state["exp_data"]
+        else:
+            # Clear any cached CSV if data doesn't match
+            if "runs_csv" in st.session_state:
+                del st.session_state["runs_csv"]
+        
+        # Build DataFrame from runs data
+        rows = []
+        for r in exp["runs"]:
+            rows.append({
+                "model": r["model"],
+                "temperature": r["temperature"],
+                "system_prompt": r["system_prompt"],
+                "seed": r["seed"],
+                "latency_ms": round(r["latency_ms"], 1),
+                "cost_usd": r.get("cost_usd"),
+                "hallucination_risk": round(r["hallucination_risk"], 2),
+                "logprob_avg": r.get("logprob_avg"),
+                "logprob_std": r.get("logprob_std"),
+                "logprob_frac_low": r.get("logprob_frac_low"),
+            })
+        df = pd.DataFrame(rows)
+        
+        # Convert to CSV and cache it
+        csv_text = df.to_csv(index=False)
+        st.session_state["runs_csv"] = csv_text
+        
+        # Base64 encode the CSV string
+        import base64
+        b64 = base64.b64encode(csv_text.encode("utf-8")).decode("utf-8")
+        href = f"data:text/csv;base64,{b64}"
+        
+        # Show HTML link instead of download button
+        st.markdown(
+            f'<a href="{href}" download="runs.csv" '
+            'style="display:inline-block;padding:8px 12px;border:1px solid #ccc;border-radius:8px;text-decoration:none;">'
+            '⬇️ Download runs (CSV)</a>',
+            unsafe_allow_html=True
+        )
