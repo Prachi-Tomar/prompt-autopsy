@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import os
 from utils import get_backend_host
+from streamlit import components
 
 st.set_page_config(page_title="Prompt Autopsy", layout="wide")
 st.title("Prompt Autopsy")
@@ -772,13 +773,42 @@ if data is not None:
         
         st.divider()
         # Download report button
-        md = make_markdown_report(data, prompt, system_prompt)
-        st.download_button(
-            "Download Autopsy Report (.md)",
-            data=md,
-            file_name="prompt_autopsy_report.md",
-            mime="text/markdown"
+        # Cache the report in session state when compare data changes
+        if "report_md" not in st.session_state or st.session_state.get("last_prompt") != prompt or st.session_state.get("last_system_prompt") != system_prompt:
+            st.session_state["report_md"] = make_markdown_report(data, prompt, system_prompt)
+            st.session_state["last_prompt"] = prompt
+            st.session_state["last_system_prompt"] = system_prompt
+        
+        # Build a base64 data URI for the HTML link
+        import base64
+        b64 = base64.b64encode(st.session_state["report_md"].encode("utf-8")).decode("utf-8")
+        href = f'data:text/markdown;base64,{b64}'
+        
+        # Render a non-rerunning HTML link
+        st.markdown(
+            f'<a href="{href}" download="prompt_autopsy_report.md" '
+            'style="display:inline-block;padding:8px 12px;border:1px solid #ccc;border-radius:8px;text-decoration:none;">'
+            '⬇️ Download Prompt Autopsy Report</a>',
+            unsafe_allow_html=True
         )
+        
+        # Render a client-side copy button
+        components.v1.html("""
+        <button id="copyReport" style="margin-left:8px;padding:8px 12px;border:1px solid #ccc;border-radius:8px;">
+        📋 Copy summary
+        </button>
+        <script>
+          const txt = `""" + st.session_state["report_md"].replace("`", "\\`").replace("\\", "\\\\").replace("\n", "\\n") + """`;
+          document.getElementById('copyReport').onclick = async () => {
+            try {
+              await navigator.clipboard.writeText(txt);
+              alert('Autopsy summary copied!');
+            } catch(e) {
+              alert('Copy failed — select the text and copy manually.');
+            }
+          };
+        </script>
+        """, height=0)
         
         # Display total estimated cost
         total_cost = sum([r.get("cost_usd") or 0.0 for r in data.get("results", [])])
