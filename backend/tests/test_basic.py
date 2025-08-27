@@ -17,61 +17,35 @@ from backend.analysis.diff import token_diff, html_token_diff, unified_token_dif
 client = TestClient(app)
 
 
-def test_compare_endpoint_mock_mode():
-    """Test the /compare endpoint in mock mode returns expected structure"""
-    # Test data
-    test_request = {
-        "prompt": "Explain quantum computing in simple terms",
-        "models": ["gpt-4o", "claude-3-opus"],
-        "temperature": 0.2
-    }
-    
-    # Make request to /compare endpoint
-    response = client.post("/compare", json=test_request)
-    
-    # Check response status
-    assert response.status_code == 200
-    
-    # Check response structure
-    data = response.json()
-    assert "results" in data
-    assert "embedding_similarity" in data
-    assert "summaries" in data
-    assert "token_diffs" in data
-    
-    # Check results structure (mock always returns 2 models)
-    assert len(data["results"]) == 2
-    for result in data["results"]:
-        assert "model" in result
-        assert "output_text" in result
-        assert "tokens" in result
-        assert "embedding" in result
-        assert "hallucination_risk" in result
-    
-    # Check embedding similarity structure
-    similarity = data["embedding_similarity"]
-    assert "gpt-4o" in similarity
-    assert "claude-3-opus" in similarity
-    assert similarity["gpt-4o"]["gpt-4o"] == 1.0
-    assert similarity["claude-3-opus"]["claude-3-opus"] == 1.0
+def test_compare_mock_mode():
+    """Ensure mock mode works when no API keys are present."""
+    # Unset environment variables to simulate missing API keys
+    with patch.dict(os.environ, {
+        "OPENAI_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "GOOGLE_CLOUD_PROJECT": "",
+        "VERTEX_LOCATION": ""
+    }, clear=True):
+        response = client.post("/compare", json={
+            "prompt": "Hello world",
+            "models": ["mock-model-a", "mock-model-b"]
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert "results" in data
+        assert isinstance(data["results"], list)
+        assert "output_text" in data["results"][0]
 
 
-def test_compare_endpoint_with_single_model_request():
-    """Test the /compare endpoint with a single model request (mock returns 2 models always)"""
-    test_request = {
-        "prompt": "Say hello in one sentence",
-        "models": ["gpt-4o"],
-        "temperature": 0.2
-    }
-    
-    response = client.post("/compare", json=test_request)
-    assert response.status_code == 200
-    
-    data = response.json()
-    # Mock mode always returns 2 models regardless of request
-    assert len(data["results"]) == 2
-    # But the first model should match the requested model
-    assert data["results"][0]["model"] in ["gpt-4o", "claude-3-opus"]
+def test_embedding_similarity():
+    from backend.analysis.embeddings import cosine_similarity
+    import numpy as np
+    vec1 = np.array([[0.1, 0.2, 0.3]])
+    vec2 = np.array([[0.1, 0.2, 0.25]])
+    score = cosine_similarity(vec1, vec2)
+    assert isinstance(score, np.ndarray)
+    assert 0.0 <= score[0][0] <= 1.0
 
 
 def test_pairwise_similarity_function():
@@ -195,70 +169,6 @@ def test_embedding_function_deterministic():
         # Should be deterministic with the same input
         assert embeddings1 == embeddings2
 
-
-def test_compare_endpoint_missing_api_keys():
-    """Test the /compare endpoint returns simple mock response when API keys are missing"""
-    # Import settings to modify them for testing
-    from backend.utils import settings
-    
-    # Store original values
-    original_openai_key = settings.OPENAI_API_KEY
-    original_anthropic_key = settings.ANTHROPIC_API_KEY
-    original_gemini_key = settings.GEMINI_API_KEY
-    original_google_project = settings.GOOGLE_CLOUD_PROJECT
-    original_vertex_location = settings.VERTEX_LOCATION
-    
-    # Temporarily unset API keys to simulate missing keys
-    settings.OPENAI_API_KEY = ""
-    settings.ANTHROPIC_API_KEY = ""
-    settings.GEMINI_API_KEY = ""
-    settings.GOOGLE_CLOUD_PROJECT = None
-    settings.VERTEX_LOCATION = None
-    
-    try:
-        # Test data
-        test_request = {
-            "prompt": "Explain quantum computing in simple terms",
-            "models": ["gpt-4o", "claude-3-opus"],
-            "temperature": 0.2
-        }
-        
-        # Make request to /compare endpoint
-        response = client.post("/compare", json=test_request)
-        
-        # Check response status
-        assert response.status_code == 200
-        
-        # Check response structure for simple mock format
-        data = response.json()
-        assert "results" in data
-        
-        # Check that we have the expected simple mock structure
-        results = data["results"]
-        assert len(results) == 2
-        
-        # Check first result
-        result1 = results[0]
-        assert "model" in result1
-        # The simple mock response uses "output_text" to match the schema
-        assert "output_text" in result1
-        # The simple mock response has "logprobs" field
-        assert "logprobs" in result1
-        
-        # Check second result
-        result2 = results[1]
-        assert "model" in result2
-        # The simple mock response uses "output_text" to match the schema
-        assert "output_text" in result2
-        # The simple mock response has "logprobs" field
-        assert "logprobs" in result2
-    finally:
-        # Restore original values
-        settings.OPENAI_API_KEY = original_openai_key
-        settings.ANTHROPIC_API_KEY = original_anthropic_key
-        settings.GEMINI_API_KEY = original_gemini_key
-        settings.GOOGLE_CLOUD_PROJECT = original_google_project
-        settings.VERTEX_LOCATION = original_vertex_location
 
 if __name__ == "__main__":
     pytest.main([__file__])

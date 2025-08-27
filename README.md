@@ -97,6 +97,29 @@ It computes per-model drift and stability metrics to help you understand how dif
 3) Run comparisons and experiments — all charts/tables will render with synthetic data
 4) Set `MOCK_MODE=0` to go back to live APIs
 
+## Automatic Mock Mode
+If no API keys are present in the environment variables, the `/compare` endpoint will automatically return mock responses without requiring `MOCK_MODE=1`. This allows you to test the application without any API keys configured.
+
+The mock response structure when no API keys are present:
+```json
+{
+  "results": [
+    {
+      "model": "mock-model-a",
+      "output": "This is a mock response for testing.",
+      "similarity": 0.95,
+      "logprobs": [ -0.1, -0.2, -0.3 ]
+    },
+    {
+      "model": "mock-model-b",
+      "output": "This is another mock response for testing.",
+      "similarity": 0.93,
+      "logprobs": [ -0.05, -0.15, -0.25 ]
+    }
+  ]
+}
+```
+
 ## Live vs Mock Mode Comparison
 
 | Feature | Live Mode | Mock Mode |

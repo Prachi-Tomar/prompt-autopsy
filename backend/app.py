@@ -40,6 +40,71 @@ app = FastAPI(title="Prompt Autopsy API")
 def root():
     return {"ok": True, "service": "prompt-autopsy", "docs": "/docs", "health": "/health"}
 
+# Helper function to generate mock response when no API keys are present
+def generate_mock_response(prompt: str, models: list) -> CompareResponse:
+    """
+    Generate a mock response when no API keys are present in os.environ.
+    Returns a simplified structure as specified in the task.
+    """
+    # If models list is provided, use first two models or default to mock models
+    if len(models) >= 2:
+        model_a, model_b = models[0], models[1]
+    else:
+        model_a, model_b = "mock-model-a", "mock-model-b"
+    
+    # Create mock ModelResult objects
+    results = [
+        ModelResult(
+            model=model_a,
+            output_text="This is a mock response for testing.",
+            tokens=["This", "is", "a", "mock", "response", "for", "testing."],
+            logprobs=[-0.1, -0.2, -0.3],
+            embedding=[0.1, 0.2, 0.3],  # dummy embedding
+            hallucination_risk=0.0,
+            hallucination_reasons=[],
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_usd=0.0
+        ),
+        ModelResult(
+            model=model_b,
+            output_text="This is another mock response for testing.",
+            tokens=["This", "is", "another", "mock", "response", "for", "testing."],
+            logprobs=[-0.05, -0.15, -0.25],
+            embedding=[0.15, 0.25, 0.35],  # dummy embedding
+            hallucination_risk=0.0,
+            hallucination_reasons=[],
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_usd=0.0
+        )
+    ]
+    
+    # Create embedding similarity matrix
+    embedding_similarity = {
+        model_a: {model_a: 1.0, model_b: 0.95},
+        model_b: {model_a: 0.95, model_b: 1.0}
+    }
+    
+    # Create summaries
+    summaries = {
+        "note": "This is a mock response for testing when API keys are missing.",
+        "risk_highlight": "No hallucination risk when API keys are missing."
+    }
+    
+    # Return CompareResponse object
+    return CompareResponse(
+        results=results,
+        embedding_similarity=embedding_similarity,
+        summaries=summaries,
+        token_diffs={},
+        logprob_diffs={},
+        semantic_diffs={},
+        aligned_logprobs={}
+    )
+
 # Simple mock response function for when API keys are missing
 def simple_mock_compare_response(req: CompareRequest) -> dict:
     """
@@ -67,44 +132,19 @@ def simple_mock_compare_response(req: CompareRequest) -> dict:
         "results": [
             {
                 "model": "mock-model-a",
-                "output_text": "This is a mock response for testing.",
-                "tokens": ["This", "is", "a", "mock", "response", "for", "testing."],
-                "logprobs": [-0.1, -0.2, -0.3],
-                "embedding": [0.1, 0.2, 0.3],  # dummy embedding
-                "hallucination_risk": 0.0,
-                "hallucination_reasons": [],
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cost_usd": 0.0
+                "output": "This is a mock response for testing.",
+                "similarity": 0.95,
+                "logprobs": [-0.1, -0.2, -0.3]
             },
             {
                 "model": "mock-model-b",
-                "output_text": "This is another mock response for testing.",
-                "tokens": ["This", "is", "another", "mock", "response", "for", "testing."],
-                "logprobs": [-0.05, -0.15, -0.25],
-                "embedding": [0.15, 0.25, 0.35],  # dummy embedding
-                "hallucination_risk": 0.0,
-                "hallucination_reasons": [],
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cost_usd": 0.0
+                "output": "This is another mock response for testing.",
+                "similarity": 0.93,
+                "logprobs": [-0.05, -0.15, -0.25]
             }
-        ],
-        "embedding_similarity": {
-            "mock-model-a": {"mock-model-a": 1.0, "mock-model-b": 0.95},
-            "mock-model-b": {"mock-model-a": 0.95, "mock-model-b": 1.0}
-        },
-        "summaries": {
-            "note": "This is a mock response for testing when API keys are missing.",
-            "risk_highlight": "No hallucination risk when API keys are missing."
-        },
-        "token_diffs": {},
-        "logprob_diffs": {},
-        "semantic_diffs": {},
-        "aligned_logprobs": {}
+        ]
     }
+
 # Mock response functions
 def mock_compare_response(req: CompareRequest) -> CompareResponse:
     # Seed randomness for deterministic results
@@ -339,23 +379,23 @@ def get_adapter(model_name: str):
 
 @app.post("/compare", response_model=CompareResponse)
 def compare(req: CompareRequest):
+    # Check if required API keys are missing in os.environ
+    # We need at least one of the main API keys to be present
+    api_keys_present = (
+        os.environ.get("OPENAI_API_KEY") or
+        os.environ.get("ANTHROPIC_API_KEY") or
+        (os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_CLOUD_PROJECT") and os.environ.get("VERTEX_LOCATION"))
+    )
+    
+    # If no API keys are present, return simple mock response using the new helper function
+    if not api_keys_present:
+        return generate_mock_response(req.prompt, req.models)
+    
     # Import settings here to check for API keys
     from backend.utils import settings
     
-    # Check if required API keys are missing
-    # We need at least one of the main API keys to be present
-    api_keys_present = (
-        settings.OPENAI_API_KEY or
-        settings.ANTHROPIC_API_KEY or
-        (settings.GEMINI_API_KEY and settings.GOOGLE_CLOUD_PROJECT and settings.VERTEX_LOCATION)
-    )
-    
-    # If no API keys are present, return simple mock response
-    if not api_keys_present:
-        return simple_mock_compare_response(req)
-    
     # If MOCK_MODE is explicitly enabled and API keys are present, use the detailed mock response
-    if MOCK_MODE and api_keys_present:
+    if settings.MOCK_MODE and api_keys_present:
         return mock_compare_response(req)
     
     results = []
