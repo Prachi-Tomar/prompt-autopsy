@@ -40,6 +40,71 @@ app = FastAPI(title="Prompt Autopsy API")
 def root():
     return {"ok": True, "service": "prompt-autopsy", "docs": "/docs", "health": "/health"}
 
+# Simple mock response function for when API keys are missing
+def simple_mock_compare_response(req: CompareRequest) -> dict:
+    """
+    Returns a simple mock response when API keys are missing.
+    Format matches the task requirements:
+    {
+        "results": [
+            {
+                "model": "mock-model-a",
+                "output": "This is a mock response for testing.",
+                "similarity": 0.95,
+                "logprobs": [ -0.1, -0.2, -0.3 ]
+            },
+            {
+                "model": "mock-model-b",
+                "output": "This is another mock response for testing.",
+                "similarity": 0.93,
+                "logprobs": [ -0.05, -0.15, -0.25 ]
+            }
+        ]
+    }
+    """
+    # Return a dict that matches the CompareResponse schema but with the required fields
+    return {
+        "results": [
+            {
+                "model": "mock-model-a",
+                "output_text": "This is a mock response for testing.",
+                "tokens": ["This", "is", "a", "mock", "response", "for", "testing."],
+                "logprobs": [-0.1, -0.2, -0.3],
+                "embedding": [0.1, 0.2, 0.3],  # dummy embedding
+                "hallucination_risk": 0.0,
+                "hallucination_reasons": [],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0
+            },
+            {
+                "model": "mock-model-b",
+                "output_text": "This is another mock response for testing.",
+                "tokens": ["This", "is", "another", "mock", "response", "for", "testing."],
+                "logprobs": [-0.05, -0.15, -0.25],
+                "embedding": [0.15, 0.25, 0.35],  # dummy embedding
+                "hallucination_risk": 0.0,
+                "hallucination_reasons": [],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0
+            }
+        ],
+        "embedding_similarity": {
+            "mock-model-a": {"mock-model-a": 1.0, "mock-model-b": 0.95},
+            "mock-model-b": {"mock-model-a": 0.95, "mock-model-b": 1.0}
+        },
+        "summaries": {
+            "note": "This is a mock response for testing when API keys are missing.",
+            "risk_highlight": "No hallucination risk when API keys are missing."
+        },
+        "token_diffs": {},
+        "logprob_diffs": {},
+        "semantic_diffs": {},
+        "aligned_logprobs": {}
+    }
 # Mock response functions
 def mock_compare_response(req: CompareRequest) -> CompareResponse:
     # Seed randomness for deterministic results
@@ -274,7 +339,23 @@ def get_adapter(model_name: str):
 
 @app.post("/compare", response_model=CompareResponse)
 def compare(req: CompareRequest):
-    if MOCK_MODE:
+    # Import settings here to check for API keys
+    from backend.utils import settings
+    
+    # Check if required API keys are missing
+    # We need at least one of the main API keys to be present
+    api_keys_present = (
+        settings.OPENAI_API_KEY or
+        settings.ANTHROPIC_API_KEY or
+        (settings.GEMINI_API_KEY and settings.GOOGLE_CLOUD_PROJECT and settings.VERTEX_LOCATION)
+    )
+    
+    # If no API keys are present, return simple mock response
+    if not api_keys_present:
+        return simple_mock_compare_response(req)
+    
+    # If MOCK_MODE is explicitly enabled and API keys are present, use the detailed mock response
+    if MOCK_MODE and api_keys_present:
         return mock_compare_response(req)
     
     results = []

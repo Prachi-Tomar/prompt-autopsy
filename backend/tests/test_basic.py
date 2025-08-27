@@ -196,5 +196,69 @@ def test_embedding_function_deterministic():
         assert embeddings1 == embeddings2
 
 
+def test_compare_endpoint_missing_api_keys():
+    """Test the /compare endpoint returns simple mock response when API keys are missing"""
+    # Import settings to modify them for testing
+    from backend.utils import settings
+    
+    # Store original values
+    original_openai_key = settings.OPENAI_API_KEY
+    original_anthropic_key = settings.ANTHROPIC_API_KEY
+    original_gemini_key = settings.GEMINI_API_KEY
+    original_google_project = settings.GOOGLE_CLOUD_PROJECT
+    original_vertex_location = settings.VERTEX_LOCATION
+    
+    # Temporarily unset API keys to simulate missing keys
+    settings.OPENAI_API_KEY = ""
+    settings.ANTHROPIC_API_KEY = ""
+    settings.GEMINI_API_KEY = ""
+    settings.GOOGLE_CLOUD_PROJECT = None
+    settings.VERTEX_LOCATION = None
+    
+    try:
+        # Test data
+        test_request = {
+            "prompt": "Explain quantum computing in simple terms",
+            "models": ["gpt-4o", "claude-3-opus"],
+            "temperature": 0.2
+        }
+        
+        # Make request to /compare endpoint
+        response = client.post("/compare", json=test_request)
+        
+        # Check response status
+        assert response.status_code == 200
+        
+        # Check response structure for simple mock format
+        data = response.json()
+        assert "results" in data
+        
+        # Check that we have the expected simple mock structure
+        results = data["results"]
+        assert len(results) == 2
+        
+        # Check first result
+        result1 = results[0]
+        assert "model" in result1
+        # The simple mock response uses "output_text" to match the schema
+        assert "output_text" in result1
+        # The simple mock response has "logprobs" field
+        assert "logprobs" in result1
+        
+        # Check second result
+        result2 = results[1]
+        assert "model" in result2
+        # The simple mock response uses "output_text" to match the schema
+        assert "output_text" in result2
+        # The simple mock response has "logprobs" field
+        assert "logprobs" in result2
+    finally:
+        # Restore original values
+        settings.OPENAI_API_KEY = original_openai_key
+        settings.ANTHROPIC_API_KEY = original_anthropic_key
+        settings.GEMINI_API_KEY = original_gemini_key
+        settings.GOOGLE_CLOUD_PROJECT = original_google_project
+        settings.VERTEX_LOCATION = original_vertex_location
+
 if __name__ == "__main__":
     pytest.main([__file__])
