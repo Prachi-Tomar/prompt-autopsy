@@ -940,7 +940,7 @@ with tab_exp:
         fig_rs.add_trace(go.Scatter(x=[rr["hallucination_risk"] for rr in exp["runs"]],
                                     y=[rr["latency_ms"] for rr in exp["runs"]],
                                     mode="markers",
-                                    text=[f"{rr['model']} | T={rr['temperature']} | S={rr['system_prompt'][:20]}{'...' if len(rr['system_prompt']) > 20 else ''}" for rr in exp["runs"]]))
+                                    text=[f"{rr['model']} | T={rr['temperature']} | S={(rr['system_prompt'] or '')[:20]}{'...' if len(rr['system_prompt'] or '') > 20 else ''}" for rr in exp["runs"]]))
         fig_rs.update_layout(xaxis_title="Risk", yaxis_title="Latency (ms)", height=350)
         st.plotly_chart(fig_rs, use_container_width=True)
 # Parameter influence (auto-detected)

@@ -11,7 +11,6 @@ A forensic tool to compare LLM responses to the same prompt across models and ex
 ## UI Overview
 
 ### Main Tab
-![Main Tab](screenshots/main_tab.png)
 The Main tab allows you to compare responses from different models to the same prompt. It displays:
 - Side-by-side model outputs with syntax highlighting
 - Hallucination risk scores and reasons
@@ -20,8 +19,14 @@ The Main tab allows you to compare responses from different models to the same p
 - Fact-check results with claim verification
 - Autopsy summary with key insights
 
+![Main Tab 1](screenshots/Main_tab_1.png)
+![Main Tab 2](screenshots/main_tab_2.png)
+![Main Tab 3](screenshots/main_tab_3.png)
+![Main Tab 4](screenshots/main_tab_4.png)
+![Main Tab 5](screenshots/main_tab_5.png)
+![Main Tab 6](screenshots/main_tab_6.png)
+
 ### Experiments Tab
-![Experiments Tab](screenshots/experiments_tab.png)
 The Experiments tab enables you to run systematic experiments with different parameters:
 - Grid-based experiment configuration
 - Results table with risk, latency, and logprob metrics
@@ -29,6 +34,10 @@ The Experiments tab enables you to run systematic experiments with different par
 - Stability line charts
 - Risk vs stability scatter plots
 - Parameter influence analysis
+
+![Experiments Tab 1](screenshots/exp_tab_1.png)
+![Experiments Tab 2](screenshots/exp_tab_2.png)
+![Experiments Tab 3](screenshots/exp_tab_3.png)
 
 ## Supported Models
 
