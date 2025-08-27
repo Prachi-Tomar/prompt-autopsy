@@ -87,6 +87,7 @@ It computes per-model drift and stability metrics to help you understand how dif
 1) python -m venv .venv && source .venv/bin/activate (or .venv\\Scripts\\activate on Windows)
 2) pip install -r requirements.txt
 3) cp .env.example .env and add your API keys
+   **Note:** Prompt Autopsy does **not** ship with API keys. To run comparisons, you must provide your own keys for the LLM providers you want to use (e.g., OpenAI, Anthropic).
 4) uvicorn backend.app:app --reload
 5) streamlit run frontend/streamlit_app.py
 
