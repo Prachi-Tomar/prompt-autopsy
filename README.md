@@ -35,6 +35,8 @@ The Experiments tab enables you to run systematic experiments with different par
 - Risk vs stability scatter plots
 - Parameter influence analysis
 
+After running an experiment, the application will automatically navigate back to the Main tab due to Streamlit's rendering behavior. To view the experiment results, simply manually navigate back to the Experiments tab.
+
 ![Experiments Tab 1](screenshots/exp_tab_1.png)
 ![Experiments Tab 2](screenshots/exp_tab_2.png)
 ![Experiments Tab 3](screenshots/exp_tab_3.png)
