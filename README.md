@@ -1,4 +1,5 @@
 # Prompt Autopsy
+[![DOI](https://zenodo.org/badge/1034178280.svg)](https://doi.org/10.5281/zenodo.17103227)
 [![CI](https://github.com/Prachi-Tomar/prompt-autopsy/actions/workflows/ci.yml/badge.svg)](https://github.com/Prachi-Tomar/prompt-autopsy/actions/workflows/ci.yml)
 A forensic tool to compare LLM responses to the same prompt across models and explain why they differ. MVP includes:
 - FastAPI endpoint /compare for multi-model calls
